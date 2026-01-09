@@ -77,7 +77,7 @@ def load_entity_index_and_mapping(
     index_type: str | None = None,
     **kwargs: Any,
 ) -> tuple[SearchIndex, Mapping]:
-    index_dir = os.path.join(get_index_dir(), kg, "entities")
+    index_dir = os.path.join(get_index_dir(kg), "entities")
 
     return load_index_and_mapping(
         index_dir,
@@ -92,7 +92,7 @@ def load_property_index_and_mapping(
     index_type: str | None = None,
     **kwargs: Any,
 ) -> tuple[SearchIndex, Mapping]:
-    index_dir = os.path.join(get_index_dir(), kg, "properties")
+    index_dir = os.path.join(get_index_dir(kg), "properties")
 
     mapping_cls = WikidataPropertyMapping if kg.startswith("wikidata") else None
 
@@ -106,8 +106,8 @@ def load_property_index_and_mapping(
 
 
 def load_kg_prefixes(kg: str, endpoint: str | None = None) -> dict[str, str]:
-    index_dir = get_index_dir()
-    prefix_file = Path(index_dir, kg, "prefixes.json")
+    kg_index_dir = get_index_dir(kg)
+    prefix_file = Path(kg_index_dir, "prefixes.json")
     if prefix_file.exists():
         prefixes = load_json(prefix_file.as_posix())
     else:
@@ -133,9 +133,9 @@ def load_kg_prefixes(kg: str, endpoint: str | None = None) -> dict[str, str]:
 
 
 def load_kg_info_sparqls(kg: str) -> tuple[str | None, str | None]:
-    index_dir = get_index_dir()
-    ent_info_file = Path(index_dir, kg, "entities", "info.sparql")
-    prop_info_file = Path(index_dir, kg, "properties", "info.sparql")
+    kg_index_dir = get_index_dir(kg)
+    ent_info_file = Path(kg_index_dir, "entities", "info.sparql")
+    prop_info_file = Path(kg_index_dir, "properties", "info.sparql")
 
     if ent_info_file.exists():
         ent_info = ent_info_file.read_text()
