@@ -5,7 +5,7 @@ from logging import Logger
 from typing import Any, Iterator
 
 from litellm.exceptions import Timeout
-from search_index.similarity import EmbeddingModel
+from search_rdf.model import TextEmbeddingModel
 from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
@@ -14,7 +14,7 @@ from grasp.functions import (
     call_function,
     kg_functions,
 )
-from grasp.manager import KgManager, find_embedding_model, format_kgs, load_kg_manager
+from grasp.manager import KgManager, format_kgs, load_kg_manager
 from grasp.manager.utils import describe_index
 from grasp.model import Message, Response, call_model
 from grasp.tasks import rules as general_rules
@@ -50,8 +50,8 @@ def system_instructions(
     prefixes = {}
     for manager in managers:
         prefixes.update(manager.prefixes)
-        index_types.add(manager.entity_index.get_type())
-        index_types.add(manager.property_index.get_type())
+        index_types.add(manager.entity_index.index_type)
+        index_types.add(manager.property_index.index_type)
 
     index_infos = []
     for index_type in sorted(index_types):
@@ -88,22 +88,17 @@ Additional rules to follow:
     return instructions
 
 
-def setup(config: GraspConfig) -> list[KgManager]:
-    emb_model: EmbeddingModel | None = None
+def setup(config: GraspConfig) -> tuple[list[KgManager], TextEmbeddingModel | None]:
+    model: TextEmbeddingModel | None = None
     managers: list[KgManager] = []
     for kg in config.knowledge_graphs:
-        if emb_model is None:
-            # find and set embedding model
-            emb_model = find_embedding_model(managers)
-
-        manager = load_kg_manager(
-            kg,
-            entities_kwargs={"model": emb_model},
-            properties_kwargs={"model": emb_model},
-        )
+        manager = load_kg_manager(kg)
         managers.append(manager)
 
-    return managers
+        if kg.has_embedding_index and model is None:
+            model = TextEmbeddingModel(config.embedding_model)
+
+    return managers, model
 
 
 def load_notes(config: GraspConfig) -> tuple[list[str], dict[str, list[str]]]:

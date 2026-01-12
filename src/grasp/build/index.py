@@ -2,10 +2,13 @@ import os
 import time
 from logging import Logger
 
-from search_index import PrefixIndex, SimilarityIndex
+import safetensors
+from search_rdf import Data, EmbeddingIndex, KeywordIndex
+from search_rdf.model import TextEmbeddingModel
 from universal_ml_utils.logging import get_logger
+from universal_ml_utils.ops import flatten
 
-from grasp.manager.utils import load_data_and_mapping
+from grasp.manager.utils import load_data_and_normalizer
 from grasp.utils import get_index_dir
 
 
@@ -14,11 +17,12 @@ def build_index(
     index_type: str,
     logger: Logger,
     overwrite: bool = False,
-    sim_precision: str | None = None,
-    sim_batch_size: int = 256,
-    sim_embedding_dim: int | None = None,
+    embedding_model: str | None = None,
+    embedding_device: str | None = None,
+    embedding_batch_size: int = 256,
+    embedding_dim: int | None = None,
 ) -> None:
-    data, _ = load_data_and_mapping(index_dir)
+    data, _ = load_data_and_normalizer(index_dir)
 
     out_dir = os.path.join(index_dir, index_type)
     if os.path.exists(out_dir) and not overwrite:
@@ -31,16 +35,28 @@ def build_index(
     start = time.perf_counter()
     logger.info(f"Building {index_type} index at {out_dir}")
 
-    if index_type == "prefix":
-        PrefixIndex.build(data, out_dir)
-    elif index_type == "similarity":
-        SimilarityIndex.build(
+    if index_type == "keyword":
+        KeywordIndex.build(data, out_dir)
+
+    elif index_type == "embedding":
+        assert embedding_model is not None, (
+            "Embedding model must be specified for embedding index"
+        )
+        embeddings_path = os.path.join(index_dir, "data", "embeddings.safetensors")
+
+        generate_embeddings(
             data,
+            embeddings_path,
+            model=embedding_model,
+            device=embedding_device,
+            batch_size=embedding_batch_size,
+            dim=embedding_dim,
+        )
+
+        EmbeddingIndex.build(
+            data,
+            embeddings_path,
             out_dir,
-            batch_size=sim_batch_size,
-            embedding_dim=sim_embedding_dim,
-            precision=sim_precision,
-            show_progress=True,
         )
     else:
         raise ValueError(f"Unknown index type: {index_type}")
@@ -49,15 +65,36 @@ def build_index(
     logger.info(f"Index build took {end - start:.2f} seconds")
 
 
+def generate_embeddings(
+    data: Data,
+    out_path: str,
+    model: str,
+    device: str | None = None,
+    batch_size: int = 256,
+    dim: int | None = None,
+) -> None:
+    embedding_model = TextEmbeddingModel(model, device)
+
+    texts = list(flatten(fields for _, fields in data))
+    embeddings = embedding_model.embed(texts, dim, batch_size, show_progress=True)
+
+    safetensors.serialize_file(
+        {"embeddings": embeddings},
+        filename=out_path,
+        metadata={"model": model},
+    )
+
+
 def build_indices(
     kg: str,
     entities_type: str,
     properties_type: str,
     overwrite: bool = False,
     log_level: str | int | None = None,
-    sim_precision: str | None = None,
-    sim_batch_size: int = 256,
-    sim_embedding_dim: int | None = None,
+    embedding_model: str | None = None,
+    embedding_device: str | None = None,
+    embedding_batch_size: int = 256,
+    embedding_dim: int | None = None,
 ) -> None:
     logger = get_logger("GRASP INDEX", log_level)
 
@@ -70,9 +107,10 @@ def build_indices(
         entities_type,
         logger,
         overwrite,
-        sim_precision,
-        sim_batch_size,
-        sim_embedding_dim,
+        embedding_model,
+        embedding_device,
+        embedding_batch_size,
+        embedding_dim,
     )
 
     # properties
@@ -82,7 +120,8 @@ def build_indices(
         properties_type,
         logger,
         overwrite,
-        sim_precision,
-        sim_batch_size,
-        sim_embedding_dim,
+        embedding_model,
+        embedding_device,
+        embedding_batch_size,
+        embedding_dim,
     )

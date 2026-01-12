@@ -1,5 +1,5 @@
-from dataclasses import dataclass
 import math
+from dataclasses import dataclass
 from itertools import chain
 from typing import Any, Callable, Iterable
 
@@ -8,7 +8,7 @@ from universal_ml_utils.ops import partition_by
 
 from grasp.configs import GraspConfig
 from grasp.manager import KgManager
-from grasp.manager.mapping import Mapping
+from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import get_common_sparql_prefixes
 from grasp.sparql.item import parse_into_binding
 from grasp.sparql.types import (
@@ -523,7 +523,7 @@ def search_entity(
 ) -> str:
     manager, _ = find_manager(managers, kg)
 
-    alts = manager.get_entity_alternatives(
+    alts = manager.search_entity(
         query=query,
         k=k,
         **search_kwargs,
@@ -549,7 +549,7 @@ def search_property(
 ) -> str:
     manager, _ = find_manager(managers, kg)
 
-    alts = manager.get_property_alternatives(
+    alts = manager.search_property(
         query=query,
         k=k,
         **search_kwargs,
@@ -599,14 +599,14 @@ query again:
 def update_known_from_iris(
     known: set[str],
     iris: Iterable[str],
-    mapping: Mapping | None = None,
+    normalizer: Normalizer | None = None,
 ):
     for iri in iris:
         known.add(iri)
-        if mapping is None:
+        if normalizer is None:
             continue
 
-        norm = mapping.normalize(iri)
+        norm = normalizer.normalize(iri)
         if norm is None:
             continue
 
@@ -617,15 +617,15 @@ def update_known_from_iris(
 def update_known_from_alts(
     known: set[str],
     alts: Iterable[Alternative],
-    mapping: Mapping | None = None,
+    normalizer: Normalizer | None = None,
 ):
     for alt in alts:
         known.add(alt.identifier)
-        if mapping is None or not alt.variants:
+        if normalizer is None or not alt.variants:
             continue
 
         for var in alt.variants:
-            denorm = mapping.denormalize(alt.identifier, var)
+            denorm = normalizer.denormalize(alt.identifier, var)
             if denorm is None:
                 continue
             known.add(denorm)
@@ -634,7 +634,7 @@ def update_known_from_alts(
 def update_known_from_rows(
     known: set[str],
     rows: Iterable[SelectRow],
-    mapping: Mapping | None = None,
+    normalizer: Normalizer | None = None,
 ):
     update_known_from_iris(
         known,
@@ -644,7 +644,7 @@ def update_known_from_rows(
             for binding in row.values()
             if binding.typ == "uri"
         ),
-        mapping,
+        normalizer,
     )
 
 
@@ -657,14 +657,14 @@ def update_known_from_alternatives(
     update_known_from_alts(
         known,
         alternatives.get(ObjType.ENTITY, []),
-        manager.entity_mapping,
+        manager.entity_normalizer,
     )
 
     # properties
     update_known_from_alts(
         known,
         alternatives.get(ObjType.PROPERTY, []),
-        manager.property_mapping,
+        manager.property_normalizer,
     )
 
     # other
@@ -683,14 +683,14 @@ def update_known_from_selections(
     update_known_from_alts(
         known,
         (sel.alternative for sel in selections if sel.obj_type == ObjType.ENTITY),
-        manager.entity_mapping,
+        manager.entity_normalizer,
     )
 
     # properties
     update_known_from_alts(
         known,
         (sel.alternative for sel in selections if sel.obj_type == ObjType.PROPERTY),
-        manager.property_mapping,
+        manager.property_normalizer,
     )
 
 
@@ -743,10 +743,10 @@ def execute_sparql(
         )
 
         # entity mapping
-        update_known_from_rows(known, rows, manager.entity_mapping)
+        update_known_from_rows(known, rows, manager.entity_normalizer)
 
         # property mapping
-        update_known_from_rows(known, rows, manager.property_mapping)
+        update_known_from_rows(known, rows, manager.property_normalizer)
 
     formatted = manager.format_sparql_result(
         result,
@@ -838,20 +838,26 @@ SELECT ?s ?p ?o WHERE {{
 
     # functions to get scores for properties and entities
     def prop_rank(prop: Binding) -> int:
-        norm = manager.property_mapping.normalize(prop.identifier())
-        if norm is None or norm[0] not in manager.property_mapping:
-            return len(manager.property_mapping)
+        norm = manager.property_normalizer.normalize(prop.identifier())
+        if norm is None:
+            return len(manager.property_data)
 
-        id = manager.property_mapping[norm[0]]
+        id = manager.property_data.id_from_identifier(norm[0])
+        if id is None:
+            return len(manager.property_data)
+
         # lower id means more popular property
         return id
 
     def ent_rank(ent: Binding) -> int:
-        norm = manager.entity_mapping.normalize(ent.identifier())
-        if norm is None or norm[0] not in manager.entity_mapping:
-            return len(manager.entity_mapping)
+        norm = manager.entity_normalizer.normalize(ent.identifier())
+        if norm is None:
+            return len(manager.entity_data)
 
-        id = manager.entity_mapping[norm[0]]
+        id = manager.entity_data.id_from_identifier(norm[0])
+        if id is None:
+            return len(manager.entity_data)
+
         # lower id means more popular entity
         return id
 
@@ -876,12 +882,12 @@ SELECT ?s ?p ?o WHERE {{
 
     def normalize_prop(prob: Binding) -> str:
         identifier = prob.identifier()
-        norm = manager.property_mapping.normalize(identifier)
+        norm = manager.property_normalizer.normalize(identifier)
         return norm[0] if norm is not None else identifier
 
     def normalize_ent(ent: Binding) -> str:
         identifier = ent.identifier()
-        norm = manager.entity_mapping.normalize(identifier)
+        norm = manager.entity_normalizer.normalize(identifier)
         return norm[0] if norm is not None else identifier
 
     # now make sure that we show a diverse set of rows
@@ -910,8 +916,8 @@ SELECT ?s ?p ?o WHERE {{
     result.data = [result.data[i] for _, i in permutation]
 
     # update known
-    update_known_from_rows(known, result.rows(end=k), manager.entity_mapping)
-    update_known_from_rows(known, result.rows(end=k), manager.property_mapping)
+    update_known_from_rows(known, result.rows(end=k), manager.entity_normalizer)
+    update_known_from_rows(known, result.rows(end=k), manager.property_normalizer)
 
     # override column names
     column_names = ["subject", "property", "object"]

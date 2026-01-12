@@ -17,7 +17,7 @@ from universal_ml_utils.logging import get_logger
 from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
-from grasp.sparql.item import Item, get_sparql_items
+from grasp.sparql.item import Item, extract_sparql_items
 from grasp.sparql.types import Alternative, Selection
 from grasp.sparql.utils import find_all
 from grasp.tasks import SparqlQaSample
@@ -235,7 +235,7 @@ def format_alternatives(alternatives: list[Alternative]) -> str:
 
     top_k_string = "\n".join(
         # dont show variants in the listing
-        f"{lab}. {alt.get_selection_string(show_matched_alias=False, include_variants=[])}"
+        f"{lab}. {alt.get_selection_string(show_matched_label=False, include_variants=[])}"
         for lab, alt in zip(ALT_LABELS, alternatives)
     )
     none_lab = ALT_LABELS[len(alternatives)]
@@ -535,7 +535,7 @@ def prepare_selection(
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
 
-    _, items = get_sparql_items(sparql, manager)
+    _, items = extract_sparql_items(sparql, manager)
     items = [item for item in items if not item.is_other_or_literal]
     assert len(items) > 0, "No valid item to replace found in sample"
 
@@ -791,7 +791,7 @@ def main(args: argparse.Namespace) -> None:
                 remove_known=True,
             )
             sparql = manager.prettify(sparql)
-            sparql, items = get_sparql_items(
+            sparql, items = extract_sparql_items(
                 sparql,
                 manager,
             )

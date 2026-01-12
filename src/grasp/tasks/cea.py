@@ -7,7 +7,7 @@ from universal_ml_utils.table import generate_table
 from grasp.configs import GraspConfig
 from grasp.functions import TaskFunctions, find_manager
 from grasp.manager import KgManager, format_kgs
-from grasp.sparql.types import Alternative
+from grasp.sparql.types import Alternative, ObjType
 from grasp.sparql.utils import parse_into_binding
 from grasp.tasks.examples import Sample
 from grasp.utils import FunctionCallException, format_list, format_notes
@@ -17,7 +17,7 @@ class Annotation(BaseModel):
     identifier: str
     entity: str
     label: str | None = None
-    synonyms: list[str] | None = None
+    aliases: list[str] | None = None
     infos: list[str] | None = None
 
 
@@ -186,7 +186,7 @@ class AnnotationState:
                 annot.identifier,
                 short_identifier=annot.entity,
                 label=annot.label,
-                aliases=annot.synonyms,
+                aliases=annot.aliases,
                 infos=annot.infos,
             )
             entities[annot.identifier] = alternative
@@ -309,39 +309,29 @@ This function overwrites any previous annotation of the cell.""",
     return fns, call_function
 
 
-def prepare_annotation(
-    manager: KgManager,
-    entity: str,
-    with_infos: bool = True,
-) -> Annotation:
+def prepare_annotation(manager: KgManager, entity: str) -> Annotation:
     binding = parse_into_binding(entity, manager.iri_literal_parser, manager.prefixes)
     if binding is None or binding.typ != "uri":
         raise ValueError(f"Entity {entity} is not a valid IRI")
 
     identifier = binding.identifier()
 
-    label = None
-    synonyms = None
-    infos = None
+    norm = manager.normalize(identifier, ObjType.ENTITY)
+    if norm is not None:
+        identifier, _ = norm
 
-    map = manager.entity_mapping
-    norm = map.normalize(identifier)
-    if norm is not None and norm[0] in map:
-        id = map[norm[0]]
-        _, label, *synonyms = manager.entity_index.get_row(id)
+    infos = manager.get_infos_for_identifiers_of_type([identifier], ObjType.ENTITY)
+    info = infos.get(identifier, {})
 
-    if with_infos:
-        all_infos = manager.get_infos_for_items(
-            [identifier],
-            manager.entity_info_sparql,
-        )
-        infos = all_infos.get(identifier, [])
+    label = info.get("label")
+    aliases = info.get("alias", [])
+    infos = info.get("info", [])
 
     return Annotation(
         identifier=identifier,
         entity=entity,
         label=label,
-        synonyms=synonyms,
+        aliases=aliases,
         infos=infos,
     )
 

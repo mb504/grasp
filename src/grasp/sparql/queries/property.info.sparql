@@ -2,35 +2,42 @@ PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 
-SELECT
-  ?id
-  (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=";;;") AS ?infos)
-WHERE {
-  # Get additional information, such as comment, domain, range, type, and superclass
+SELECT DISTINCT ?id ?value ?type WHERE {
+  # Get additional information, such as label, alias, comment, domain, range, type, and superclass
   {
     VALUES ?id { {IDS} }
-    ?id rdfs:comment ?info
-    FILTER(LANGMATCHES(LANG(?info), "en") || LANG(?info) = "" || DATATYPE(?info) = xsd:string)
+    ?id rdfs:label ?value
+    BIND("label" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id skos:altLabel ?value
+    BIND("alias" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id rdfs:comment ?value
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:domain/rdfs:label ?domain
-    FILTER(LANGMATCHES(LANG(?domain), "en") || LANG(?domain) = "" || DATATYPE(?domain) = xsd:string)
-    BIND(CONCAT("has domain ", ?domain) AS ?info)
+    BIND(CONCAT("has domain ", ?domain) AS ?value)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:range/rdfs:label ?range
-    FILTER(LANGMATCHES(LANG(?range), "en") || LANG(?range) = "" || DATATYPE(?range) = xsd:string)
-    BIND(CONCAT("has range ", ?range) AS ?info)
+    BIND(CONCAT("has range ", ?range) AS ?value)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdf:type/rdfs:label ?type
-    FILTER(LANGMATCHES(LANG(?type), "en") || LANG(?type) = "" || DATATYPE(?type) = xsd:string)
-    BIND(CONCAT("is a ", ?type) AS ?info)
+    BIND(CONCAT("is a ", ?type) AS ?value)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:subPropertyOf/rdfs:label ?superproperty
-    FILTER(LANGMATCHES(LANG(?superproperty), "en") || LANG(?superproperty) = "" || DATATYPE(?superproperty) = xsd:string)
-    BIND(CONCAT("is subproperty of ", ?superproperty) AS ?info)
+    BIND(CONCAT("is subproperty of ", ?superproperty) AS ?value)
+    BIND("info" AS ?type)
   }
+
+  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "" || DATATYPE(?value) = xsd:string)
 }
-GROUP BY ?id
+ORDER BY ?id ?type ?value

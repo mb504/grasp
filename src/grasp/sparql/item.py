@@ -17,7 +17,7 @@ from grasp.sparql.utils import (
 
 __all__ = [
     "Item",
-    "get_sparql_items",
+    "extract_sparql_items",
     "natural_sparql_from_items",
     "selections_from_items",
 ]
@@ -93,7 +93,7 @@ def _get_item(
     start = len(prefix)
     end = start + len(item)
 
-    infos = {
+    kwargs = {
         "parse": parse,
         "item": item,
         "item_span": (start, end),
@@ -122,7 +122,7 @@ def _get_item(
             ),
             obj_type=ObjType.LITERAL,
             variant=None,
-            **infos,
+            **kwargs,
         )
 
     # we have an iri
@@ -143,17 +143,12 @@ def _get_item(
         if norm is None:
             continue
 
-        norm_iri, variant = norm
-        row = manager.get_row(norm_iri, obj_type)
-        if row is None:
+        identifier, variant = norm
+        if not manager.check_identifier(identifier, obj_type):
             continue
-
-        identifier, label, *synonyms = row
 
         alternative = manager.build_alternative(
             identifier,
-            label,
-            synonyms,
             variants=[variant] if variant else None,
         )
 
@@ -161,7 +156,7 @@ def _get_item(
             alternative=alternative,
             obj_type=obj_type,
             variant=variant,
-            **infos,
+            **kwargs,
         )
 
     # we know that it is an IRI of another known prefix,
@@ -178,12 +173,20 @@ def _get_item(
         obj_type=ObjType.OTHER,
         variant=None,
         invalid=invalid,
-        **infos,
+        **kwargs,
     )
 
 
 def selections_from_items(item: list[Item]) -> list[Selection]:
     return [item.selection for item in item]
+
+
+def selections_from_sparql(
+    sparql: str,
+    manager: KgManager,
+) -> list[Selection]:
+    _, items = extract_sparql_items(sparql, manager)
+    return selections_from_items(items)
 
 
 def natural_sparql_from_items(
@@ -201,7 +204,7 @@ def natural_sparql_from_items(
     return prefix
 
 
-def get_sparql_items(
+def extract_sparql_items(
     sparql: str,
     manager: KgManager,
     is_prefix: bool = False,
@@ -240,45 +243,3 @@ def get_sparql_items(
 
     # by occurence position in the query
     return sparql, sorted(items, key=lambda item: item.item_span)  # type: ignore
-
-
-def drop_sparql_items(
-    items: list[Item],
-    p: float,
-    other_or_literal_only: bool = False,
-) -> list[Item]:
-    # drop items that can be dropped with the given probability
-    # dropped items are either:
-    # - literals
-    # - iris that are not entities or properties, e.g. rdfs:label
-    # - entities or properties that occurr earlier in the query
-    #   and can therefore be predicted directly
-
-    def matches(item: Item, other: Item) -> bool:
-        # if any of the two items is invalid, they should not match
-        if item.invalid or other.invalid:
-            return False
-
-        # only check for identifiers here, not the variant because
-        # we want to allow to directly predict other variants of
-        # already seen items, e.g. if there is wdt:P31 earlier in the query
-        # allow to predict p:P31 as well
-        return item.alternative.identifier == other.alternative.identifier
-
-    drop_mask = []
-    for item in items:
-        in_prefix = not other_or_literal_only and any(
-            not dropped and matches(item, other)
-            for dropped, other in zip(drop_mask, items[: len(drop_mask)])
-        )
-
-        # only drop valid items, e.g. rdfs:label
-        # if they are not valid, it means they should be known
-        # but are not covered by the index
-        droppable = not item.invalid and (item.is_other_or_literal or in_prefix)
-
-        drop = droppable and random.random() < p
-
-        drop_mask.append(drop)
-
-    return [item for item, drop in zip(items, drop_mask) if not drop]

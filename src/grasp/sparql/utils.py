@@ -834,8 +834,8 @@ def execute(
         except requests.RequestException as e:
             # try to get qlever exception
             try:
-                status = e.response.status_code
-                body = e.response.json()
+                status = e.response.status_code  # type: ignore
+                body = e.response.json()  # type: ignore
             except Exception:
                 status = None
                 body = None
@@ -918,7 +918,10 @@ def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
         assert line.startswith("PREFIX "), "Each line must start with 'PREFIX '"
         _, rest = line.split(" ", 1)
         prefix, uri = rest.split(":", 1)
-        prefixes[prefix.strip()] = uri.strip()[:-1]
+        uri = uri.strip()
+        assert is_iri(uri), "Prefix must be in IRI format"
+        prefixes[prefix.strip()] = uri[:-1]
+
     return prefixes
 
 

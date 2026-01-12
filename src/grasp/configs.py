@@ -6,10 +6,14 @@ from pydantic import BaseModel, conlist
 class KgConfig(BaseModel):
     kg: str
     endpoint: str | None = None
-    entities_type: str | None = None
-    properties_type: str | None = None
+    entities_type: str = "keyword"
+    properties_type: str = "embedding"
     notes_file: str | None = None
     example_index: str | None = None
+
+    @property
+    def has_embedding_index(self) -> bool:
+        return self.entities_type == "embedding" or self.properties_type == "embedding"
 
 
 class ModelConfig(BaseModel):
@@ -40,6 +44,9 @@ class GraspConfig(ModelConfig):
     notes_file: str | None = None
 
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
+
+    # for embedding indices and example indices
+    embedding_model: str = "Qwen3/Qwen3-Embedding-0.6B"
 
     # optional task specific parameters
     # map[task_name, map[param_name, param_value]]

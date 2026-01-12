@@ -17,7 +17,6 @@ from universal_ml_utils.ops import partition_by
 
 from grasp.configs import ServerConfig
 from grasp.core import generate, load_notes, setup
-from grasp.manager import find_embedding_model
 from grasp.model import Message
 from grasp.tasks import Task
 from grasp.tasks.examples import load_example_indices
@@ -80,10 +79,11 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
         allow_headers=["*"],
     )
 
-    managers = setup(config)
-    kgs = [manager.kg for manager in managers]
+    managers, model = setup(config)
+    if model is None:
+        model = config.embedding_model
 
-    model = find_embedding_model(managers)
+    kgs = [manager.kg for manager in managers]
 
     notes = {}
     kg_notes = {}
@@ -93,7 +93,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
         notes[task.value] = general_notes
         kg_notes[task.value] = kg_specific_notes
 
-        task_indices = load_example_indices(task.value, config, model=model)
+        task_indices = load_example_indices(task.value, config, model)
         example_indices[task.value] = task_indices
 
     if config.share is not None:

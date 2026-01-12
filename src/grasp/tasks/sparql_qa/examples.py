@@ -3,6 +3,7 @@ from typing import Any
 from uuid import uuid4
 
 from grasp.configs import GraspConfig
+from grasp.functions import find_manager
 from grasp.manager import KgManager
 from grasp.model import Message, Response, ToolCall
 from grasp.tasks.examples import ExampleIndex
@@ -113,10 +114,12 @@ def format_examples(
     max_rows: int,
     max_cols: int,
 ) -> str:
+    manager, _ = find_manager(managers, kg)
     exs = []
+
     for example in examples:
         try:
-            sparql, selections, result = prepare_sparql_result(
+            result, selections = prepare_sparql_result(
                 example.sparql,
                 kg,
                 managers,
@@ -128,7 +131,7 @@ def format_examples(
             continue
 
         exs.append(
-            f"Question:\n{example.question}\n\n{format_sparql_result(sparql, kg, selections, result)}"
+            f"Question:\n{example.question}\n\n{format_sparql_result(manager, result, selections)}"
         )
 
     if not exs:
@@ -180,7 +183,7 @@ def find_similar_examples(
 
     example_index = example_indices[kg]
 
-    examples = example_index.find_matches(
+    examples = example_index.search(
         question,
         num_examples,
         min_score=MIN_EXAMPLE_SCORE,

@@ -1,67 +1,65 @@
 import os
 import time
 from pathlib import Path
-from typing import Any, Type
+from typing import Type
 
-from search_index import IndexData, PrefixIndex, SearchIndex, SimilarityIndex
+from search_rdf import Data, KeywordIndex, EmbeddingIndex
 from universal_ml_utils.io import dump_json, load_json
 from universal_ml_utils.logging import get_logger
 
-from grasp.manager.mapping import Mapping, WikidataPropertyMapping
+from grasp.manager.normalizer import Normalizer, WikidataPropertyNormalizer
 from grasp.sparql.utils import get_endpoint, load_qlever_prefixes
 from grasp.utils import get_index_dir
 
 
-def load_data_and_mapping(
-    index_dir: str,
-    mapping_cls: Type[Mapping] | None = None,
-) -> tuple[IndexData, Mapping]:
+SearchIndex = KeywordIndex | EmbeddingIndex
+
+
+def load_data(index_dir: str) -> Data:
     try:
-        data = IndexData.load(
-            os.path.join(index_dir, "data.tsv"),
-            os.path.join(index_dir, "offsets.bin"),
-        )
+        data = Data.load(os.path.join(index_dir, "data"))
     except Exception as e:
         raise ValueError(f"Failed to load index data from {index_dir}") from e
 
-    if mapping_cls is None:
-        mapping_cls = Mapping
-
-    try:
-        mapping = mapping_cls.load(
-            data,
-            os.path.join(index_dir, "mapping.bin"),
-        )
-    except Exception as e:
-        raise ValueError(f"Failed to load mapping from {index_dir}") from e
-
-    return data, mapping
+    return data
 
 
-def load_index_and_mapping(
+def load_data_and_normalizer(
+    index_dir: str,
+    normalizer_cls: Type[Normalizer] | None = None,
+) -> tuple[Data, Normalizer]:
+    data = load_data(index_dir)
+
+    if normalizer_cls is None:
+        normalizer_cls = Normalizer
+
+    return data, normalizer_cls()
+
+
+def load_index_and_normalizer(
     index_dir: str,
     index_type: str,
-    mapping_cls: Type[Mapping] | None = None,
-    **kwargs: Any,
-) -> tuple[SearchIndex, Mapping]:
+    normalizer_cls: Type[Normalizer] | None = None,
+) -> tuple[SearchIndex, Normalizer]:
     logger = get_logger("KG INDEX LOADING")
     start = time.perf_counter()
 
-    if index_type == "prefix":
-        index_cls = PrefixIndex
-    elif index_type == "similarity":
-        index_cls = SimilarityIndex
+    data, normalizer = load_data_and_normalizer(index_dir, normalizer_cls)
+    index_dir = os.path.join(index_dir, index_type)
+    load_kwargs = {"data": data, "index_dir": index_dir}
+
+    if index_type == "keyword":
+        index_cls = KeywordIndex
+    elif index_type == "embedding":
+        index_cls = EmbeddingIndex
+        load_kwargs["embedding_path"] = os.path.join(
+            index_dir, "embeddings.safetensors"
+        )
     else:
         raise ValueError(f"Unknown index type {index_type}")
 
-    data, mapping = load_data_and_mapping(index_dir, mapping_cls)
-
     try:
-        index = index_cls.load(
-            data,
-            os.path.join(index_dir, index_type),
-            **kwargs,
-        )
+        index = index_cls.load(**load_kwargs)
     except Exception as e:
         raise ValueError(f"Failed to load {index_type} index from {index_dir}") from e
 
@@ -69,39 +67,35 @@ def load_index_and_mapping(
 
     logger.debug(f"Loading {index_type} index from {index_dir} took {end - start:.2f}s")
 
-    return index, mapping
+    return index, normalizer
 
 
-def load_entity_index_and_mapping(
+def load_entity_index_and_normalizer(
     kg: str,
     index_type: str | None = None,
-    **kwargs: Any,
-) -> tuple[SearchIndex, Mapping]:
+) -> tuple[SearchIndex, Normalizer]:
     index_dir = os.path.join(get_index_dir(kg), "entities")
 
-    return load_index_and_mapping(
+    return load_index_and_normalizer(
         index_dir,
-        # for entities use prefix index by default
-        index_type or "prefix",
-        **kwargs,
+        # for entities use keyword index by default
+        index_type or "keyword",
     )
 
 
-def load_property_index_and_mapping(
+def load_property_index_and_normalizer(
     kg: str,
     index_type: str | None = None,
-    **kwargs: Any,
-) -> tuple[SearchIndex, Mapping]:
+) -> tuple[SearchIndex, Normalizer]:
     index_dir = os.path.join(get_index_dir(kg), "properties")
 
-    mapping_cls = WikidataPropertyMapping if kg.startswith("wikidata") else None
+    mapping_cls = WikidataPropertyNormalizer if kg.startswith("wikidata") else None
 
-    return load_index_and_mapping(
+    return load_index_and_normalizer(
         index_dir,
-        # for properties use similarity index by default
-        index_type or "similarity",
+        # for properties use embedding index by default
+        index_type or "embedding",
         mapping_cls,
-        **kwargs,
     )
 
 
@@ -153,39 +147,19 @@ def load_kg_info_sparqls(kg: str) -> tuple[str | None, str | None]:
 def load_kg_indices(
     kg: str,
     entities_type: str | None = None,
-    entities_kwargs: dict[str, Any] | None = None,
     properties_type: str | None = None,
-    properties_kwargs: dict[str, Any] | None = None,
-) -> tuple[SearchIndex, SearchIndex, Mapping, Mapping]:
-    if entities_type != "similarity" and entities_kwargs:
-        # entities kwargs only used for similarity index
-        entities_kwargs.clear()
-
-    ent_index, ent_mapping = load_entity_index_and_mapping(
+) -> tuple[SearchIndex, SearchIndex, Normalizer, Normalizer]:
+    ent_index, ent_normalizer = load_entity_index_and_normalizer(
         kg,
         entities_type,
-        **(entities_kwargs or {}),
     )
 
-    if properties_type == "prefix" and properties_kwargs:
-        # properties kwargs only used for prefix index
-        properties_kwargs.clear()
-
-    # try to share embedding model between entities and properties
-    # if entities also use a similarity index
-    if entities_type == "similarity" and (
-        not properties_kwargs or properties_kwargs.get("model") is None
-    ):
-        properties_kwargs = properties_kwargs or {}
-        properties_kwargs["model"] = ent_index.model
-
-    prop_index, prop_mapping = load_property_index_and_mapping(
+    prop_index, prop_normalizer = load_property_index_and_normalizer(
         kg,
         properties_type,
-        **(properties_kwargs or {}),
     )
 
-    return ent_index, prop_index, ent_mapping, prop_mapping
+    return ent_index, prop_index, ent_normalizer, prop_normalizer
 
 
 def get_common_sparql_prefixes() -> dict[str, str]:
@@ -211,21 +185,21 @@ def get_common_sparql_prefixes() -> dict[str, str]:
     }
 
 
-def is_sim_index(index: SearchIndex) -> bool:
-    return index.get_type() == "similarity"
+def is_embedding_index(index: SearchIndex) -> bool:
+    return index.index_type == "embedding"
 
 
 def describe_index(index_type: str) -> tuple[str, str]:
-    if index_type == "prefix":
-        title = "Prefix index"
+    if index_type == "keyword":
+        title = "Keyword index"
         desc = "Retrieves items by overlap between query keywords \
-and item words. The query keywords can match item words exactly or \
-as prefixes."
+and item label words. The query keywords can match item label words exactly or \
+as prefixes. No special query operators like AND/OR are supported."
 
-    elif index_type == "similarity":
-        title = "Similarity index"
-        desc = "Retrieves items by cosine similarity between their embeddings and \
-the query embedding."
+    elif index_type == "embedding":
+        title = "Embedding index"
+        desc = "Retrieves items by cosine similarity between their \
+label embeddings and the query embedding."
 
     else:
         raise ValueError(f"Unknown index type {index_type}")
