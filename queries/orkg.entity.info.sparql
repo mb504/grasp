@@ -10,12 +10,12 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("label" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
-    ?id rdf:type/rdfs:label ?type
-    BIND(CONCAT("is a ", ?type) AS ?value)
+    ?id rdf:type/rdfs:label ?typeLabel
+    BIND(CONCAT("is a ", ?typeLabel) AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
-    ?id orkgp:description ?value 
+    ?id orkgp:description ?value
     BIND("info" AS ?type)
   }
 }
