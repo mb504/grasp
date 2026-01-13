@@ -1,6 +1,7 @@
 PREFIX rdfs: <http://www.w3.org/2000/01/rdf-schema#>
 PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
+PREFIX skos: <http://www.w3.org/2004/02/skos/core#>
 
 SELECT DISTINCT ?id ?value ?type WHERE {
   # Get additional information, such as label, alias, comment, domain, range, type, and superclass
@@ -28,8 +29,8 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
-    ?id rdf:type/rdfs:label ?type
-    BIND(CONCAT("is a ", ?type) AS ?value)
+    ?id rdf:type/rdfs:label ?typ
+    BIND(CONCAT("is a ", ?typ) AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
@@ -38,6 +39,6 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("info" AS ?type)
   }
 
-  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "" || DATATYPE(?value) = xsd:string)
+  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "")
 }
 ORDER BY ?id ?type ?value

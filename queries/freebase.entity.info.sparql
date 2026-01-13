@@ -3,25 +3,31 @@ PREFIX rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
 PREFIX fb: <http://rdf.freebase.com/ns/>
 
-SELECT
-  ?id
-  (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=";;;") AS ?infos)
-WHERE {
+SELECT DISTINCT ?id ?value ?type WHERE {
   # Get additional information
   {
     VALUES ?id { {IDS} }
-    ?id fb:common.topic.description ?info
-    FILTER(LANGMATCHES(LANG(?info), "en"))
+    ?id @en@fb:type.object.name ?value
+    BIND("label" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
-    ?id fb:common.topic.notable_types/fb:type.object.name ?type
-    FILTER(LANGMATCHES(LANG(?type), "en")) .
-    BIND(CONCAT("has type ", ?type) AS ?info)
+    ?id @en@fb:common.topic.alias ?value
+    BIND("alias" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id @en@fb:common.topic.description ?value
+    BIND("info" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id fb:common.topic.notable_types/@en@fb:type.object.name ?type
+    BIND(CONCAT("has type ", ?type) AS ?value)
+    BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id fb:freebase.type_hints.mediator ?mediator
     FILTER(?mediator = "true")
-    BIND("is compound value type / mediator type" AS ?info)
+    BIND("is compound value type / mediator type" AS ?value)
+    BIND("info" AS ?type)
   }
 }
-GROUP BY ?id
+ORDER BY ?id ?type ?value

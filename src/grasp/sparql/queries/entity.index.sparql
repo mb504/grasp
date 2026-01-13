@@ -22,6 +22,6 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
   }
 
   # English only as default
-  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "" || DATATYPE(?value) = xsd:string)
+  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "")
 }
 ORDER BY DESC(?score) ?id DESC(?tags)

@@ -29,8 +29,8 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
-    ?id rdf:type/rdfs:label ?type
-    BIND(CONCAT("is a ", ?type) AS ?value)
+    ?id rdf:type/rdfs:label ?typ
+    BIND(CONCAT("is a ", ?typ) AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
@@ -39,6 +39,6 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("info" AS ?type)
   }
 
-  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "" || DATATYPE(?value) = xsd:string)
+  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "")
 }
 ORDER BY ?id ?type ?value

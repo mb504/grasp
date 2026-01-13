@@ -91,6 +91,8 @@ def get_data(
     prefixes = get_common_sparql_prefixes()
     prefixes.update(load_kg_prefixes(kg))
 
+    logger.info(f"Using prefixes:\n{json.dumps(prefixes, indent=2)}")
+
     kg_dir = get_index_dir(kg)
 
     # entities
@@ -244,6 +246,9 @@ def prepare_json_items(
     last_id = None
     fields = []
     for num, binding in enumerate(bindings, start=1):
+        if num % 1_000_000 == 0:
+            logger.info(f"Processed {num:,} bindings so far")
+
         logger.debug(f"Processing binding #{num:,}:\n{json.dumps(binding, indent=2)}")
 
         id = binding["id"]["value"]
@@ -258,9 +263,11 @@ def prepare_json_items(
         # wrap id with brackets
         id = f"<{id}>"
 
-        fields.append({"type": "text", "value": label, "tags": tags})
+        if label:
+            fields.append({"type": "text", "value": label, "tags": tags})
 
         if last_id is None or id == last_id:
+            last_id = id
             continue
 
         if add_id_as_label == "always" or (add_id_as_label == "empty" and not fields):
@@ -280,9 +287,6 @@ def prepare_json_items(
 
         last_id = id
         fields = []
-
-        if num % 1_000_000 == 0:
-            logger.info(f"Processed {num:,} bindings so far")
 
     if last_id is None:
         return

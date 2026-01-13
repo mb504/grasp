@@ -16,9 +16,12 @@ from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import (
     SearchIndex,
     describe_index,
+    load_entity_index_and_normalizer,
+    load_kg_caches,
     load_kg_indices,
     load_kg_info_sparqls,
     load_kg_prefixes,
+    load_property_index_and_normalizer,
 )
 from grasp.sparql.types import (
     Alternative,
@@ -63,25 +66,25 @@ class KgManager:
     def __init__(
         self,
         kg: str,
-        entity_index: SearchIndex,
-        property_index: SearchIndex,
         entity_normalizer: Normalizer,
         property_normalizer: Normalizer,
-        prefixes: dict[str, str] | None = None,
-        endpoint: str | None = None,
+        entity_index: SearchIndex | None = None,
+        property_index: SearchIndex | None = None,
         entity_info_sparql: str | None = None,
         property_info_sparql: str | None = None,
         entity_cache: Cache | None = None,
         property_cache: Cache | None = None,
+        prefixes: dict[str, str] | None = None,
+        endpoint: str | None = None,
     ):
         self.kg = kg
 
         self.entity_index = entity_index
-        self.entity_data = entity_index.data()
+        self.entity_data = entity_index.data() if entity_index else None
         self.entity_cache = entity_cache
 
         self.property_index = property_index
-        self.property_data = property_index.data()
+        self.property_data = property_index.data() if property_index else None
         self.property_cache = property_cache
 
         self.entity_normalizer = entity_normalizer
@@ -395,6 +398,9 @@ class KgManager:
         elif obj_type == ObjType.PROPERTY:
             data = self.property_data
         else:
+            data = None
+
+        if data is None:
             return False
 
         return data.id_from_identifier(identifier) is not None
@@ -409,6 +415,9 @@ class KgManager:
         elif obj_type == ObjType.PROPERTY:
             data = self.property_data
         else:
+            data = None
+
+        if data is None:
             return None
 
         id = data.id_from_identifier(identifier)
@@ -576,8 +585,8 @@ class KgManager:
                 request_timeout=(4.0, 6.0),
                 read_timeout=6.0,
             )
-            assert isinstance(result, SelectResult) and result.num_columns == 2, (
-                "Expected a SELECT query with a three columns for info SPARQL"
+            assert isinstance(result, SelectResult) and result.num_columns == 3, (
+                "Expected a SELECT query with three columns for info SPARQL"
             )
             id_var = result.variables[0]
             text_var = result.variables[1]
@@ -1030,17 +1039,28 @@ class KgManager:
 
 
 def load_kg_manager(cfg: KgConfig) -> KgManager:
-    indices = load_kg_indices(cfg.kg, cfg.entities_type, cfg.properties_type)
+    ent_index, prop_index, ent_norm, prop_norm = load_kg_indices(
+        cfg.kg,
+        cfg.entities_type,
+        cfg.properties_type,
+    )
+
     prefixes = load_kg_prefixes(cfg.kg, cfg.endpoint)
     ent_info_sparql, prop_info_sparql = load_kg_info_sparqls(cfg.kg)
+    ent_cache, prop_cache = load_kg_caches(cfg.kg)
 
     return KgManager(
         cfg.kg,
-        *indices,
-        prefixes,
-        cfg.endpoint,
+        ent_norm,
+        prop_norm,
+        ent_index,
+        prop_index,
         ent_info_sparql,
         prop_info_sparql,
+        ent_cache,
+        prop_cache,
+        prefixes,
+        cfg.endpoint,
     )
 
 
@@ -1058,13 +1078,18 @@ def format_kgs(managers: list[KgManager], kg_notes: dict[str, list[str]]) -> str
 
 
 def format_kg(manager: KgManager, notes: list[str]) -> str:
-    ent_type, _ = describe_index(manager.entity_index.index_type)
-    prop_type, _ = describe_index(manager.property_index.index_type)
+    msg = f"{manager.kg} at {manager.endpoint}"
 
-    msg = (
-        f"{manager.kg} at {manager.endpoint} with {ent_type.lower()} for entities and "
-        f"{prop_type.lower()} for properties"
-    )
+    parts = []
+    if manager.entity_index is not None:
+        ent_type, _ = describe_index(manager.entity_index)
+        parts.append(f"{ent_type.lower()} for entities")
+    if manager.property_index is not None:
+        prop_type, _ = describe_index(manager.property_index)
+        parts.append(f"{prop_type.lower()} for properties")
+
+    if parts:
+        msg += " with " + " and ".join(parts)
 
     if not notes:
         return msg

@@ -6,15 +6,22 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
   # Get ids and their frequencies for score
   { SELECT ?id (COUNT(?id) AS ?score) WHERE { ?s ?id ?o } GROUP BY ?id } 
 
-  {
-    # Get label
-    ?id rdfs:label ?value
-    BIND("main" AS ?tags)
-  } UNION {
-    # Get aliases
-    ?id skos:altLabel ?value
+  # Properties often do not have labels, so wrap this in OPTIONAL
+  OPTIONAL {
+    {
+      # Get label
+      ?id rdfs:label ?value
+      BIND("main" AS ?tags)
+    } UNION {
+      # Get aliases
+      ?id skos:altLabel ?value
+    }
   }
 
-  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "" || DATATYPE(?value) = xsd:string)
+  FILTER(
+    !BOUND(?value) ||
+    LANGMATCHES(LANG(?value), "en") ||
+    LANG(?value) = ""
+  )
 }
 ORDER BY DESC(?score) ?id DESC(?tags)
