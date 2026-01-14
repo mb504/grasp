@@ -16,6 +16,7 @@ from universal_ml_utils.logging import get_logger, setup_logging
 from universal_ml_utils.ops import extract_field
 
 from grasp.build import build_indices, get_data
+from grasp.build.cache import build_caches
 from grasp.build.data import merge_kgs
 from grasp.configs import (
     GraspConfig,
@@ -410,7 +411,7 @@ def parse_args() -> argparse.Namespace:
     index_parser.add_argument(
         "--emb-model",
         type=str,
-        default="Qwen3/Qwen3-Embedding-0.6B",
+        default="Qwen/Qwen3-Embedding-0.6B",
         help="Embedding model to use when building embedding index",
     )
     index_parser.add_argument(
@@ -431,6 +432,39 @@ def parse_args() -> argparse.Namespace:
         help="Batch size when building embedding index",
     )
     add_overwrite_arg(index_parser)
+
+    # cache infos for knowledge graph
+    cache_parser = subparsers.add_parser(
+        "cache",
+        help="Cache entity and property information for a knowledge graph",
+    )
+    cache_parser.add_argument(
+        "kg",
+        type=str,
+        choices=available_kgs,
+        help="Knowledge graph to cache infos for",
+    )
+    cache_parser.add_argument(
+        "-b",
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Number of items to process in each batch.",
+    )
+    cache_parser.add_argument(
+        "-e",
+        "--endpoint",
+        type=str,
+        default=None,
+        help="SPARQL endpoint to use for querying the knowledge graph.",
+    )
+    cache_parser.add_argument(
+        "--limit",
+        type=int,
+        default=10_000_000,
+        help="Only cache the top N items",
+    )
+    add_overwrite_arg(cache_parser)
 
     # build example index
     example_parser = subparsers.add_parser(
@@ -708,6 +742,16 @@ def main():
             embedding_device=args.emb_device,
             embedding_batch_size=args.emb_batch_size,
             embedding_dim=args.emb_dim,
+        )
+
+    elif args.command == "cache":
+        build_caches(
+            args.kg,
+            args.endpoint,
+            args.limit,
+            args.batch_size,
+            args.overwrite,
+            args.log_level,
         )
 
     elif args.command == "notes":

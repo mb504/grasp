@@ -46,7 +46,7 @@ class GraspConfig(ModelConfig):
     knowledge_graphs: list[KgConfig] = [KgConfig(kg="wikidata")]
 
     # for embedding indices and example indices
-    embedding_model: str = "Qwen3/Qwen3-Embedding-0.6B"
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
 
     # optional task specific parameters
     # map[task_name, map[param_name, param_value]]

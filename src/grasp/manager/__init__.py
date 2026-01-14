@@ -16,12 +16,11 @@ from grasp.manager.normalizer import Normalizer
 from grasp.manager.utils import (
     SearchIndex,
     describe_index,
-    load_entity_index_and_normalizer,
     load_kg_caches,
     load_kg_indices,
     load_kg_info_sparqls,
+    load_kg_normalizers,
     load_kg_prefixes,
-    load_property_index_and_normalizer,
 )
 from grasp.sparql.types import (
     Alternative,
@@ -1038,14 +1037,17 @@ class KgManager:
         )
 
 
-def load_kg_manager(cfg: KgConfig) -> KgManager:
-    ent_index, prop_index, ent_norm, prop_norm = load_kg_indices(
-        cfg.kg,
-        cfg.entities_type,
-        cfg.properties_type,
-    )
+def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
+    ent_index = prop_index = None
+    if not skip_indices:
+        ent_index, prop_index = load_kg_indices(
+            cfg.kg,
+            cfg.entities_type,
+            cfg.properties_type,
+        )
 
     prefixes = load_kg_prefixes(cfg.kg, cfg.endpoint)
+    ent_norm, prop_norm = load_kg_normalizers(cfg.kg)
     ent_info_sparql, prop_info_sparql = load_kg_info_sparqls(cfg.kg)
     ent_cache, prop_cache = load_kg_caches(cfg.kg)
 

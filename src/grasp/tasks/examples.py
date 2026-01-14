@@ -2,7 +2,7 @@ import os
 import time
 from typing import Any, Type
 
-import safetensors
+from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex
 from search_rdf.model import TextEmbeddingModel
 from universal_ml_utils.io import dump_jsonl, load_jsonl
@@ -51,10 +51,10 @@ class ExampleIndex:
         model: TextEmbeddingModel,
     ) -> "ExampleIndex":
         data = Data.load(os.path.join(dir, "data"))
-        embeddings_path = os.path.join(dir, "data", "embeddings.safetensors")
+        embedding_path = os.path.join(dir, "data", "embedding.safetensors")
         index_dir = os.path.join(dir, "index")
 
-        index = EmbeddingIndex.load(data, embeddings_path, index_dir)
+        index = EmbeddingIndex.load(data, embedding_path, index_dir)
         assert index.model == model.model, (
             f"Embedding model mismatch: index model {index.model}, "
             f"provided model {model.model}"
@@ -111,15 +111,15 @@ class ExampleIndex:
             show_progress=True,
         )
 
-        embeddings_path = os.path.join(data_dir, "embeddings.safetensors")
+        embedding_path = os.path.join(data_dir, "embedding.safetensors")
 
-        safetensors.serialize_file(
-            {"embeddings": embeddings},
-            filename=embeddings_path,
-            metadata={"model": model},
+        save_file(
+            {"embedding": embeddings},
+            filename=embedding_path,
+            metadata={"model": model.model},
         )
 
-        EmbeddingIndex.build(data, embeddings_path, index_dir)
+        EmbeddingIndex.build(data, embedding_path, index_dir)
 
         end = time.perf_counter()
         logger.info(f"Example index built in {end - start:.2f} seconds")

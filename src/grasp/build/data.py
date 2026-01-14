@@ -1,9 +1,8 @@
-import os
 import json
-import mmap
+import os
 from logging import Logger
 from pathlib import Path
-from typing import Any, BinaryIO, Iterator
+from typing import Iterator
 from urllib.parse import unquote_plus
 
 import ijson
@@ -210,7 +209,7 @@ def get_object_name_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
     return unquote_plus(obj_name)
 
 
-def get_label_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
+def get_value_from_id(obj_id: str, prefixes: dict[str, str]) -> str:
     obj_name = get_object_name_from_id(obj_id, prefixes)
     label = " ".join(camel_case_split(part) for part in split_at_punctuation(obj_name))
     return label.strip()
@@ -252,7 +251,7 @@ def prepare_json_items(
         logger.debug(f"Processing binding #{num:,}:\n{json.dumps(binding, indent=2)}")
 
         id = binding["id"]["value"]
-        label = binding["label"]["value"] if "label" in binding else ""
+        value = binding["value"]["value"] if "value" in binding else ""
 
         tag_binding = binding.get("tag", binding.get("tags", None))
         if tag_binding is not None:
@@ -263,8 +262,8 @@ def prepare_json_items(
         # wrap id with brackets
         id = f"<{id}>"
 
-        if label:
-            fields.append({"type": "text", "value": label, "tags": tags})
+        if value:
+            fields.append({"type": "text", "value": value, "tags": tags})
 
         if last_id is None or id == last_id:
             last_id = id
@@ -275,7 +274,7 @@ def prepare_json_items(
             fields.append(
                 {
                     "type": "text",
-                    "value": get_label_from_id(last_id, prefixes),
+                    "value": get_value_from_id(last_id, prefixes),
                     "tags": [],
                 }
             )
@@ -297,7 +296,7 @@ def prepare_json_items(
         fields.append(
             {
                 "type": "text",
-                "value": get_label_from_id(last_id, prefixes),
+                "value": get_value_from_id(last_id, prefixes),
                 "tags": [],
             }
         )

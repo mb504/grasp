@@ -2,7 +2,7 @@ import os
 import time
 from logging import Logger
 
-import safetensors
+from safetensors.numpy import save_file
 from search_rdf import Data, EmbeddingIndex, KeywordIndex
 from search_rdf.model import TextEmbeddingModel
 from universal_ml_utils.logging import get_logger
@@ -33,7 +33,7 @@ def build_index(
 
     os.makedirs(out_dir, exist_ok=True)
     start = time.perf_counter()
-    logger.info(f"Building {index_type} index at {out_dir}")
+    logger.info(f"Building {index_type} index at {out_dir} from {len(data):,} items")
 
     if index_type == "keyword":
         KeywordIndex.build(data, out_dir)
@@ -53,11 +53,8 @@ def build_index(
             dim=embedding_dim,
         )
 
-        EmbeddingIndex.build(
-            data,
-            embeddings_path,
-            out_dir,
-        )
+        EmbeddingIndex.build(data, embeddings_path, out_dir)
+
     else:
         raise ValueError(f"Unknown index type: {index_type}")
 
@@ -76,10 +73,10 @@ def generate_embeddings(
     embedding_model = TextEmbeddingModel(model, device)
 
     texts = list(flatten(fields for _, fields in data))
-    embeddings = embedding_model.embed(texts, dim, batch_size, show_progress=True)
+    embedding = embedding_model.embed(texts, dim, batch_size, show_progress=True)
 
-    safetensors.serialize_file(
-        {"embeddings": embeddings},
+    save_file(
+        {"embedding": embedding},
         filename=out_path,
         metadata={"model": model},
     )

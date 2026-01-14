@@ -25,28 +25,18 @@ def load_data(index_dir: str) -> Data:
     return data
 
 
-def load_normalizer(normalizer_cls: Type[Normalizer] | None = None) -> Normalizer:
-    if normalizer_cls is None:
-        normalizer_cls = Normalizer
-
-    return normalizer_cls()
-
-
-def load_index_and_normalizer(
+def load_index(
     index_dir: str,
     index_type: str,
-    normalizer_cls: Type[Normalizer] | None = None,
-) -> tuple[SearchIndex | None, Normalizer]:
+) -> SearchIndex | None:
     logger = get_logger("KG INDEX LOADING")
     start = time.perf_counter()
-
-    normalizer = load_normalizer(normalizer_cls)
 
     try:
         data = load_data(index_dir)
     except Exception as e:
         logger.warning(f"Failed to load data from {index_dir}: {e}")
-        return None, normalizer
+        return None
 
     index_dir = os.path.join(index_dir, index_type)
     load_kwargs = {"data": data, "index_dir": index_dir}
@@ -55,9 +45,7 @@ def load_index_and_normalizer(
         index_cls = KeywordIndex
     elif index_type == "embedding":
         index_cls = EmbeddingIndex
-        load_kwargs["embeddings_path"] = os.path.join(
-            index_dir, "embeddings.safetensors"
-        )
+        load_kwargs["embedding_path"] = os.path.join(index_dir, "embedding.safetensors")
     else:
         raise ValueError(f"Unknown index type {index_type}")
 
@@ -65,30 +53,37 @@ def load_index_and_normalizer(
         index = index_cls.load(**load_kwargs)
     except Exception as e:
         logger.warning(f"Failed to load {index_type} index from {index_dir}: {e}")
-        return None, normalizer
+        return None
 
     end = time.perf_counter()
 
     logger.debug(f"Loading {index_type} index from {index_dir} took {end - start:.2f}s")
 
-    return index, normalizer
+    return index
 
 
-def load_entity_index_and_normalizer(
+def load_entity_index(
     kg: str,
     index_type: str,
-) -> tuple[SearchIndex | None, Normalizer]:
+) -> SearchIndex | None:
     index_dir = os.path.join(get_index_dir(kg), "entities")
-    return load_index_and_normalizer(index_dir, index_type)
+    return load_index(index_dir, index_type)
 
 
-def load_property_index_and_normalizer(
+def load_property_index(
     kg: str,
     index_type: str,
-) -> tuple[SearchIndex | None, Normalizer]:
+) -> SearchIndex | None:
     index_dir = os.path.join(get_index_dir(kg), "properties")
-    mapping_cls = WikidataPropertyNormalizer if kg.startswith("wikidata") else None
-    return load_index_and_normalizer(index_dir, index_type, mapping_cls)
+    return load_index(index_dir, index_type)
+
+
+def load_kg_normalizers(kg: str) -> tuple[Normalizer, Normalizer]:
+    ent_normalizer = Normalizer()
+    prop_normalizer = ent_normalizer
+    if kg.startswith("wikidata"):
+        prop_normalizer = WikidataPropertyNormalizer()
+    return ent_normalizer, prop_normalizer
 
 
 def load_kg_prefixes(kg: str, endpoint: str | None = None) -> dict[str, str]:
@@ -151,10 +146,10 @@ def load_kg_indices(
     kg: str,
     entities_type: str,
     properties_type: str,
-) -> tuple[SearchIndex | None, SearchIndex | None, Normalizer, Normalizer]:
-    ent_index, ent_norm = load_entity_index_and_normalizer(kg, entities_type)
-    prop_index, prop_norm = load_property_index_and_normalizer(kg, properties_type)
-    return ent_index, prop_index, ent_norm, prop_norm
+) -> tuple[SearchIndex | None, SearchIndex | None]:
+    ent_index = load_entity_index(kg, entities_type)
+    prop_index = load_property_index(kg, properties_type)
+    return ent_index, prop_index
 
 
 def get_common_sparql_prefixes() -> dict[str, str]:

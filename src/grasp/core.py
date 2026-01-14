@@ -50,8 +50,10 @@ def system_instructions(
     prefixes = {}
     for manager in managers:
         prefixes.update(manager.prefixes)
-        index_types.add(manager.entity_index.index_type)
-        index_types.add(manager.property_index.index_type)
+        if manager.entity_index is not None:
+            index_types.add(manager.entity_index.index_type)
+        if manager.property_index is not None:
+            index_types.add(manager.property_index.index_type)
 
     index_infos = []
     for index_type in sorted(index_types):
