@@ -192,6 +192,7 @@ def _get_item(
             obj_type_infos = manager.get_infos_for_identifiers_of_type(
                 [identifier], obj_type
             )
+            # merge infos across types
             for key, value in obj_type_infos.get(identifier, {}).items():
                 if key not in infos or not isinstance(infos[key], list):
                     infos[key] = value

@@ -1,5 +1,4 @@
 import dbm
-import os
 import json
 
 
@@ -8,12 +7,9 @@ class Cache:
         self.db = db
 
     @staticmethod
-    def try_load(cache_dir: str):
-        try:
-            db = dbm.open(os.path.join(cache_dir, "db"), "r")
-            return Cache(db)
-        except Exception:
-            return None
+    def load(cache_path: str):
+        db = dbm.open(cache_path, "r")
+        return Cache(db)
 
     def get(self, identifier: str) -> dict | None:
         raw = self.db.get(identifier)

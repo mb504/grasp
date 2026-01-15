@@ -12,7 +12,7 @@ from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizerBase
 from universal_ml_utils.io import dump_jsonl, load_jsonl
-from universal_ml_utils.logging import get_logger
+from universal_ml_utils.logging import get_logger, setup_logging
 
 from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.configs import KgConfig
@@ -768,6 +768,7 @@ def parse_args() -> argparse.Namespace:
 
 def main(args: argparse.Namespace) -> None:
     manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
+    setup_logging(args.log_level)
     logger = get_logger("GRISP DATA", args.log_level)
 
     if os.path.exists(args.output_file) and not args.overwrite:

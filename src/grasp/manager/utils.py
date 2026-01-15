@@ -131,13 +131,33 @@ def load_kg_info_sparqls(kg: str) -> tuple[str | None, str | None]:
 
 
 def load_kg_caches(kg: str) -> tuple[Cache | None, Cache | None]:
+    logger = get_logger("KG CACHE LOADING")
     kg_index_dir = get_index_dir(kg)
 
-    ent_cache_dir = os.path.join(kg_index_dir, "entities", "cache")
-    ent_cache = Cache.try_load(ent_cache_dir)
+    start = time.perf_counter()
+    ent_cache_dir = os.path.join(kg_index_dir, "entities", "info.cache", "db")
+    try:
+        ent_cache = Cache.load(ent_cache_dir)
+        end = time.perf_counter()
+        logger.debug(
+            f"Loading entity cache from {ent_cache_dir} took {end - start:.2f}s",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load entity cache from {ent_cache_dir}: {e}")
+        ent_cache = None
 
-    prop_cache_dir = os.path.join(kg_index_dir, "properties", "cache")
-    prop_cache = Cache.try_load(prop_cache_dir)
+    start = time.perf_counter()
+    prop_cache_dir = os.path.join(kg_index_dir, "properties", "info.cache", "db")
+    try:
+        prop_cache = Cache.load(prop_cache_dir)
+        end = time.perf_counter()
+        logger.debug(
+            f"Loading property cache from {prop_cache_dir} took {end - start:.2f}s",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to load property cache from {prop_cache_dir}: {e}")
+        prop_cache = None
+
     return ent_cache, prop_cache
 
 

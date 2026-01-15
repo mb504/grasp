@@ -8,24 +8,22 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   {
     VALUES ?id { {IDS} }
     ?id rdfs:label ?value
-    FILTER(LANGMATCHES(LANG(?value), "en"))
     BIND("label" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id skos:altLabel ?value
-    FILTER(LANGMATCHES(LANG(?value), "en"))
     BIND("alias" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id schema:description ?value
-    FILTER(LANGMATCHES(LANG(?value), "en"))
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id wdt:P1647/rdfs:label ?supprop
-    FILTER(LANGMATCHES(LANG(?supprop), "en"))
     BIND(CONCAT("is subproperty of ", ?supprop) AS ?value)
     BIND("info" AS ?type)
   }
+
+  FILTER(LANG(?value) = "en") || LANG(?value) = "")
 }
 ORDER BY ?id ?type ?value

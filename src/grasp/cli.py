@@ -461,7 +461,7 @@ def parse_args() -> argparse.Namespace:
     cache_parser.add_argument(
         "--limit",
         type=int,
-        default=10_000_000,
+        default=1_000_000,
         help="Only cache the top N items",
     )
     add_overwrite_arg(cache_parser)

@@ -466,7 +466,7 @@ class KgManager:
             variants = ordered_unique(variants)
 
         if aliases is not None:
-            aliases = ordered_unique(aliases, filter=lambda syn: syn != label)
+            aliases = ordered_unique(aliases, filter=lambda alias: alias != label)
 
         if infos is not None:
             infos = ordered_unique(infos)
@@ -650,6 +650,7 @@ class KgManager:
             info_cache = self.property_cache
             data = self.property_data
         else:
+            self.logger.warning(f"No info retrieval for object type '{obj_type}'")
             return {}
 
         return self.get_infos_for_identifiers(

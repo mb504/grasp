@@ -20,7 +20,7 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
 
   FILTER(
     !BOUND(?value) ||
-    LANGMATCHES(LANG(?value), "en") ||
+    LANG(?value) = "en") ||
     LANG(?value) = ""
   )
 }

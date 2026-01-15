@@ -39,6 +39,6 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     BIND("info" AS ?type)
   }
 
-  FILTER(LANGMATCHES(LANG(?value), "en") || LANG(?value) = "")
+  FILTER(LANG(?value) = "en") || LANG(?value) = "")
 }
 ORDER BY ?id ?type ?value
