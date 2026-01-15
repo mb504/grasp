@@ -1028,7 +1028,7 @@ class KgManager:
         rename_obj_type = [
             (ObjType.ENTITY, "entities"),
             (ObjType.PROPERTY, "properties"),
-            (ObjType.UNINDEXED, "unindexed items"),
+            (ObjType.UNINDEXED, "other (non-indexed) items"),
         ]
 
         grouped = group_selections(selections)

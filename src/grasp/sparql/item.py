@@ -174,10 +174,10 @@ def _get_item(
             **kwargs,
         )
 
-    obj_type = find_obj_type_from_prefixes(iri, manager.prefixes, COMMON_PREFIXES)
+    item_obj_type = find_obj_type_from_prefixes(iri, manager.prefixes, COMMON_PREFIXES)
 
     variant = None
-    if obj_type == ObjType.UNINDEXED:
+    if item_obj_type == ObjType.UNINDEXED:
         # try to get infos from live endpoint
         infos = {}
         for obj_type in obj_types:
@@ -209,7 +209,7 @@ def _get_item(
             infos=infos,
             variants=[variant] if variant else None,
         ),
-        obj_type=obj_type,
+        obj_type=item_obj_type,
         variant=None,
         **kwargs,
     )

@@ -207,7 +207,7 @@ def find_obj_type_from_prefixes(
     is_common = find_longest_prefix(iri, common_prefixes) is not None
     is_known = find_longest_prefix(iri, prefixes) is not None
 
-    if is_common and not is_known:
+    if is_common:
         return ObjType.COMMON
     elif is_known:
         return ObjType.UNINDEXED

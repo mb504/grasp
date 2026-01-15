@@ -20,20 +20,23 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   } UNION {
     VALUES ?id { {IDS} }
     ?id wdt:P279/rdfs:label ?supclass
-    BIND(CONCAT("is subclass of ", ?supclass) AS ?value)
+    FILTER(LANG(?supclass) = "en")
+    BIND(STRLANG(CONCAT("is subclass of ", ?supclass), "en") AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id wdt:P31/rdfs:label ?inst
-    BIND(CONCAT("is instance of ", ?inst) AS ?value)
+    FILTER(LANG(?inst) = "en")
+    BIND(STRLANG(CONCAT("is instance of ", ?inst), "en") AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id wdt:P106/rdfs:label ?job
-    BIND(CONCAT("has occupation ", ?job) AS ?value)
+    FILTER(LANG(?job) = "en")
+    BIND(STRLANG(CONCAT("has occupation ", ?job), "en") AS ?value)
     BIND("info" AS ?type)
   }
 
-  FILTER(LANG(?value) = "en") || LANG(?value) = "")
+  FILTER(LANG(?value) = "en")
 }
 ORDER BY ?id ?type ?value

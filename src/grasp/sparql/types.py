@@ -10,7 +10,7 @@ class ObjType(StrEnum):
     ENTITY = "entity"
     PROPERTY = "property"
     COMMON = "common"
-    UNINDEXED = "other"
+    UNINDEXED = "unindexed"
     UNKNOWN = "unknown"
     LITERAL = "literal"
 
@@ -19,11 +19,6 @@ class ObjType(StrEnum):
 
     def __str__(self) -> str:
         return self.value
-
-
-def obj_types_before(obj_type: ObjType) -> list[ObjType]:
-    values = list(ObjType)
-    return values[: values.index(obj_type)]
 
 
 class Position(StrEnum):
@@ -277,25 +272,19 @@ class Selection:
     alternative: Alternative
     obj_type: ObjType
     variant: str | None
-    invalid: bool = False
 
     def __init__(
         self,
         alternative: Alternative,
         obj_type: ObjType,
         variant: str | None = None,
-        invalid: bool = False,
     ) -> None:
         self.alternative = alternative
         self.obj_type = obj_type
         self.variant = variant
-        self.invalid = invalid
 
     def __repr__(self) -> str:
-        return (
-            f"Selection({self.alternative}, {self.obj_type}, "
-            f"{self.variant}, {self.invalid=})"
-        )
+        return f"Selection({self.alternative}, {self.obj_type}, {self.variant})"
 
     def __hash__(self) -> int:
         return hash((self.alternative, self.obj_type, self.variant))
@@ -341,15 +330,7 @@ def group_selections(
     grouped = {}
     for _, group in groupby(sorted(selections, key=_key), key=_key):
         selections = list(group)
-
         obj_type = selections[0].obj_type
-
-        if obj_type == ObjType.UNINDEXED:
-            # only keep invalid OTHERs, as they represent kg IRIs that
-            # are not indexed but still referenced in the query
-            selections = [sel for sel in selections if sel.invalid]
-            if not selections:
-                continue
 
         if obj_type not in grouped:
             grouped[obj_type] = []

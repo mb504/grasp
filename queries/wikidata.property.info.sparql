@@ -20,10 +20,11 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   } UNION {
     VALUES ?id { {IDS} }
     ?id wdt:P1647/rdfs:label ?supprop
+    FILTER(LANG(?supprop) = "en")
     BIND(CONCAT("is subproperty of ", ?supprop) AS ?value)
     BIND("info" AS ?type)
   }
 
-  FILTER(LANG(?value) = "en") || LANG(?value) = "")
+  FILTER(LANG(?value) = "en")
 }
 ORDER BY ?id ?type ?value

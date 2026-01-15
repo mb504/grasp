@@ -18,10 +18,6 @@ SELECT DISTINCT ?id ?value ?tags WHERE {
     }
   }
 
-  FILTER(
-    !BOUND(?value) ||
-    LANG(?value) = "en") ||
-    LANG(?value) = ""
-  )
+  FILTER(!BOUND(?value) || LANG(?value) = "en")
 }
 ORDER BY DESC(?score) ?id DESC(?tags)

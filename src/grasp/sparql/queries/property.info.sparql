@@ -20,25 +20,29 @@ SELECT DISTINCT ?id ?value ?type WHERE {
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:domain/rdfs:label ?domain
-    BIND(CONCAT("has domain ", ?domain) AS ?value)
+    FILTER(LANG(?domain) = "en")
+    BIND(STRLANG(CONCAT("has domain ", ?domain), "en") AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:range/rdfs:label ?range
-    BIND(CONCAT("has range ", ?range) AS ?value)
+    FILTER(LANG(?range) = "en")
+    BIND(STRLANG(CONCAT("has range ", ?range), "en") AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdf:type/rdfs:label ?typ
-    BIND(CONCAT("is a ", ?typ) AS ?value)
+    FILTER(LANG(?typ) = "en")
+    BIND(STRLANG(CONCAT("is a ", ?typ), "en") AS ?value)
     BIND("info" AS ?type)
   } UNION {
     VALUES ?id { {IDS} }
     ?id rdfs:subPropertyOf/rdfs:label ?superproperty
-    BIND(CONCAT("is subproperty of ", ?superproperty) AS ?value)
+    FILTER(LANG(?superproperty) = "en")
+    BIND(STRLANG(CONCAT("is subproperty of ", ?superproperty), "en") AS ?value)
     BIND("info" AS ?type)
   }
 
-  FILTER(LANG(?value) = "en") || LANG(?value) = "")
+  FILTER(LANG(?value) = "en")
 }
 ORDER BY ?id ?type ?value
