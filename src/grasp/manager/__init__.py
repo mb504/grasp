@@ -94,6 +94,7 @@ class KgManager:
 
         self.entity_info_sparql = entity_info_sparql or load_entity_info_sparql()
         self.property_info_sparql = property_info_sparql or load_property_info_sparql()
+        self.disable_info_retrieval = False
 
         self.endpoint = endpoint or get_endpoint(self.kg)
 
@@ -103,6 +104,9 @@ class KgManager:
 
     def set_embedding_model(self, model: TextEmbeddingModel) -> None:
         self.embedding_model = model
+
+    def set_info_retrieval(self, enable: bool) -> None:
+        self.disable_info_retrieval = not enable
 
     def prettify(
         self,
@@ -686,7 +690,7 @@ class KgManager:
             return infos
 
         # try live SPARQL next
-        if info_sparql is not None:
+        if info_sparql is not None and not self.disable_info_retrieval:
             live_infos = self.retrieve_infos_for_identifiers(
                 identifiers,
                 info_sparql,
@@ -1044,7 +1048,11 @@ class KgManager:
         )
 
 
-def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
+def load_kg_manager(
+    cfg: KgConfig,
+    skip_indices: bool = False,
+    skip_caches: bool = False,
+) -> KgManager:
     ent_index = prop_index = None
     if not skip_indices:
         ent_index, prop_index = load_kg_indices(
@@ -1056,7 +1064,10 @@ def load_kg_manager(cfg: KgConfig, skip_indices: bool = False) -> KgManager:
     prefixes = load_kg_prefixes(cfg.kg, cfg.endpoint)
     ent_norm, prop_norm = load_kg_normalizers(cfg.kg)
     ent_info_sparql, prop_info_sparql = load_kg_info_sparqls(cfg.kg)
-    ent_cache, prop_cache = load_kg_caches(cfg.kg)
+
+    ent_cache = prop_cache = None
+    if not skip_caches:
+        ent_cache, prop_cache = load_kg_caches(cfg.kg)
 
     return KgManager(
         cfg.kg,
