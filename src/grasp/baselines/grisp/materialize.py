@@ -15,7 +15,7 @@ from grasp.baselines.grisp.data import (
     prepare_skeleton,
 )
 from grasp.configs import KgConfig
-from grasp.manager import load_kg_manager
+from grasp.manager import KgManager, load_kg_manager
 from grasp.utils import get_available_knowledge_graphs
 
 
@@ -63,6 +63,18 @@ def parse_args() -> argparse.Namespace:
         help="Augmentation probability for selections",
     )
     parser.add_argument(
+        "--val-output-file",
+        type=str,
+        default=None,
+        help="Path to the output file to save validation materialized data",
+    )
+    parser.add_argument(
+        "--val-split",
+        type=float,
+        default=0.1,
+        help="Proportion of data to use for validation split (only if --val-output-file is provided)",
+    )
+    parser.add_argument(
         "--is-val",
         action="store_true",
         help="Whether the input file is a validation set",
@@ -87,6 +99,28 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def materialize_sample(
+    sample: GRISPSample,
+    manager: KgManager,
+    n: int,
+    is_val: bool = False,
+) -> GRISPMaterializedSample:
+    if is_val:
+        n = 1
+
+    skeletons = [prepare_skeleton(sample, is_val) for _ in range(n)]
+
+    if sample.has_placeholders:
+        selections = [prepare_selection(sample, manager, is_val) for _ in range(n)]
+    else:
+        selections = []
+
+    return GRISPMaterializedSample(
+        skeletons=skeletons,
+        selections=selections,
+    )
+
+
 def main(args: argparse.Namespace) -> None:
     # to show info from kg manager
     setup_logging("INFO")
@@ -96,8 +130,21 @@ def main(args: argparse.Namespace) -> None:
             f"Output file {args.output_file} already exists. "
             "Use --overwrite to overwrite."
         )
+    elif args.is_val and args.val_output_file is not None:
+        raise ValueError("Cannot specify --val-output-file when --is-val is set.")
+
+    random.seed(args.seed)
+    desc = "validation" if args.is_val else "training"
 
     samples = load_samples([args.input_file])
+    if args.val_output_file is not None:
+        val_size = int(len(samples) * args.val_split)
+        assert val_size > 0, "Validation split is too small."
+        random.shuffle(samples)
+        val_samples = samples[:val_size]
+        samples = samples[val_size:]
+    else:
+        val_samples = None
 
     config = KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint)
     manager = load_kg_manager(config)
@@ -106,43 +153,30 @@ def main(args: argparse.Namespace) -> None:
         model = TextEmbeddingModel(args.embedding_model)
         manager.set_embedding_model(model)
 
-    random.seed(args.seed)
-    n = args.num_materializations if not args.is_val else 1
-
     materialized = []
-    for sample in tqdm(samples, desc="Materializing samples"):
+    for sample in tqdm(samples, desc=f"Materializing {desc} samples"):
         assert isinstance(sample, GRISPSample), "Expected non-materialized GRISP sample"
-
-        skeletons = [
-            prepare_skeleton(
-                sample,
-                args.is_val,
-                args.skeleton_p,
-            )
-            for _ in range(n)
-        ]
-
-        if sample.has_placeholders:
-            selections = [
-                prepare_selection(
-                    sample,
-                    manager,
-                    args.is_val,
-                    args.skeleton_p,
-                    args.selection_p,
-                )
-                for _ in range(n)
-            ]
-        else:
-            selections = []
-
-        materialized_sample = GRISPMaterializedSample(
-            skeletons=skeletons,
-            selections=selections,
+        materialized_sample = materialize_sample(
+            sample,
+            manager,
+            args.num_materializations,
+            args.is_val,
         )
         materialized.append(materialized_sample.model_dump())
 
     dump_jsonl(materialized, args.output_file)
+
+    if args.val_output_file is None or val_samples is None:
+        return
+
+    materialized = []
+    for sample in tqdm(val_samples, desc="Materializing validation samples"):
+        assert isinstance(sample, GRISPSample), "Expected non-materialized GRISP sample"
+
+        materialized_sample = materialize_sample(sample, manager, 1, is_val=True)
+        materialized.append(materialized_sample.model_dump())
+
+    dump_jsonl(materialized, args.val_output_file)
 
 
 if __name__ == "__main__":
