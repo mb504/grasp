@@ -173,7 +173,7 @@ def evaluate_f1(
         dump_json(evaluations, evaluation_file)
 
     dump_json(evaluations, evaluation_file)
-    logger.info(f"Evaluation results saved to {evaluation_file}")
+    logger.info(f"{len(evaluations):,} evaluation results saved to {evaluation_file}")
     f1_scores = [
         eval["prediction"]["score"]
         for eval in evaluations.values()
