@@ -282,6 +282,7 @@ def main(args: argparse.Namespace) -> None:
         run_name=run_name,
         metric_for_best_model="eval_loss",
         gradient_checkpointing=config.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         torch_compile=config.do_compile,
         dataloader_num_workers=config.num_workers,
         dataloader_prefetch_factor=4 if config.num_workers > 0 else None,
