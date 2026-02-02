@@ -21,7 +21,7 @@ max_length: env(MAX_LENGTH:8192)
 mask_inputs: env(MASK_INPUTS:true)
 batch_size: env(BATCH_SIZE:8)
 gradient_accumulation_steps: env(GRADIENT_ACCUMULATION_STEPS:1)
-gradient_checkpointing: env(GRADIENT_CHECKPOINTING:false)
+gradient_checkpointing: env(GRADIENT_CHECKPOINTING:true)
 num_epochs: env(NUM_EPOCHS:1)
 
 skeleton_p: env(SKELETON_P:0.2)
