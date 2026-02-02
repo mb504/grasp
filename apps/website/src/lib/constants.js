@@ -64,5 +64,7 @@ export const saveSharedStateEndpoint = () => endpointFor('/save');
 export const loadSharedStateEndpoint = (id) => endpointFor(`/load/${encodeURIComponent(id)}`);
 export const sharePathForId = (id) => {
   const trimmed = typeof id === 'string' ? id.trim() : '';
-  return trimmed ? `${base}/share/${trimmed}` : '';
+  if (!trimmed) return '';
+  const origin = typeof window !== 'undefined' ? window.location.origin : '';
+  return `${origin}${base}/share/${trimmed}`;
 };
