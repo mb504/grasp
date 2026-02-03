@@ -1203,32 +1203,42 @@ def show_ranking_view(ranking_data):
         st.caption(f"**Judge Model:** {judge_model_info}")
 
     # First pass: collect all unique models across all benchmarks to establish global ordering
-    all_models = set()
+    sorted_models = None
     for entry in benchmark_entries:
         try:
             rank_data = load_json(entry["filepath"])
-            if "summary" in rank_data:
-                for key in rank_data["summary"].keys():
-                    if key != "tie":
-                        file_path = Path(key)
-                        model_name_parsed, additional_info_parsed = parse_model_name(
-                            file_path.stem
-                        )
-                        model_display_name = (
-                            f"{model_name_parsed} ({additional_info_parsed})"
-                            if additional_info_parsed
-                            else model_name_parsed
-                        )
-                        all_models.add(model_display_name)
+
+            prediction_models = []
+            for file in rank_data["prediction_files"]:
+                file_path = Path(file)
+                model_name_parsed, additional_info_parsed = parse_model_name(
+                    file_path.stem
+                )
+                model_display_name = (
+                    f"{model_name_parsed} ({additional_info_parsed})"
+                    if additional_info_parsed
+                    else model_name_parsed
+                )
+                prediction_models.append(model_display_name)
+
+            if sorted_models is None:
+                sorted_models = prediction_models
+            elif sorted(sorted_models) != sorted(prediction_models):
+                sorted_models = None
+                break
         except Exception:
             continue
 
+    if sorted_models is None:
+        st.warning(
+            "Could not establish a consistent set of models across all benchmarks for this ranking comparison."
+        )
+        return
+
     # Sort models and assign letters
-    sorted_models = sorted(all_models)
     model_to_letter = {
         model: chr(65 + i) for i, model in enumerate(sorted_models)
     }  # A=65 in ASCII
-    letter_to_model = {v: k for k, v in model_to_letter.items()}
 
     # Display model legend
     if sorted_models:
@@ -1452,24 +1462,19 @@ def show_ranking_view(ranking_data):
         st.info("No sample identifiers found in the evaluations.")
         return
 
-    selection_options = [
-        f"{sample_id} - {id_to_question.get(sample_id, 'No question provided')}"
-        for sample_id in sorted_ids
-    ]
-
     st.markdown("---")
     st.subheader(f"Sample Explorer: {selected_kg} / {selected_benchmark}")
 
-    selected_option = st.selectbox(
+    selected_id = st.selectbox(
         "Select an example:",
-        selection_options,
+        sorted_ids,
+        format_func=lambda x: f"{x} - {id_to_question.get(x, 'No question provided')}",
         key=f"ranking_sample_{selected_kg}_{selected_benchmark}",
     )
 
-    if not selected_option:
+    if not selected_id:
         return
 
-    selected_id = selected_option.split(" - ")[0]
     summary = selected_rank_data.get("summary", {})
     outputs_dir = benchmark_dir / "outputs"
     model_outputs = {}
@@ -1477,11 +1482,8 @@ def show_ranking_view(ranking_data):
     model_display_order = []
     seen_models = set()
 
-    for key in summary.keys():
-        if key == "tie":
-            continue
-
-        file_path = Path(key)
+    for path in selected_rank_data["prediction_files"]:
+        file_path = Path(path)
         model_name_parsed, additional_info_parsed = parse_model_name(file_path.stem)
         model_display_name = (
             f"{model_name_parsed} ({additional_info_parsed})"
@@ -1494,7 +1496,7 @@ def show_ranking_view(ranking_data):
             {
                 "display_name": model_display_name,
                 "output_path": output_path,
-                "summary_key": key,
+                "summary_key": path,
             }
         )
 

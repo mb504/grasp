@@ -300,7 +300,7 @@ def evaluate_with_judge(
         grouped: dict = {}
         for pred in predictions:
             assert pred.get("task", "sparql-qa") == "sparql-qa", (
-                "Only SPARQL QA task is supported for evaluation"
+                "Only SPARQL QA task is supported for judge evaluation"
             )
 
             if is_invalid_output(pred):
