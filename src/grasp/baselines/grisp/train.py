@@ -255,7 +255,7 @@ def main(args: argparse.Namespace) -> None:
     logging_steps = max(1, steps_per_epoch // 100)  # log 100 times per epoch
 
     # eval once per epoch, but at least 10 times during training
-    total_steps = steps_per_epoch * config.num_epochs
+    total_steps = int(steps_per_epoch * config.num_epochs)
     eval_steps = max(1, min(steps_per_epoch, total_steps // 10))
 
     report_to = None
