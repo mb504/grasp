@@ -250,7 +250,10 @@ that attempt to answer the question. Your task is to determine \
 which of the candidate queries is the best answer to the question, \
 or whether they are all equally good. The query logic and correctness \
 should be your primary criteria for judgement, while other factors such as \
-additional information or human readability should be secondary.
+additional information or human readability should be secondary. \
+Note that some candidates might indicate that no SPARQL query \
+has been generated/found, which should not automatically be considered worse \
+than a generated SPARQL query that is incorrect or irrelevant to the question.
 
 Think before you finalize your answer with the provided judge function.""",
         ),

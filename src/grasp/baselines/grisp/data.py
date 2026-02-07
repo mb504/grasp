@@ -96,7 +96,7 @@ def extract_query_and_variant_from_nl_iri(nl_iri: dict) -> tuple[str, str | None
     query = extract_value_from_nl_iri(nl_iri)
     variant: str | None = None
 
-    m = re.search(r" \((.*)\)$", query)
+    m = re.search(r" \(([^)]*)\)$", query)
     if m is not None:
         # remove variant in parentheses at the end
         query = query[: m.start()].strip()
