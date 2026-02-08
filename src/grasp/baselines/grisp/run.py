@@ -48,6 +48,7 @@ from grasp.sparql.types import (
     Position,
     Selection,
 )
+from grasp.sparql.utils import SPARQLExecuteException
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 
 
@@ -439,7 +440,9 @@ def find_alternatives(
 
 def is_api_failure(exception: Exception) -> bool:
     exc_msg = str(exception).lower()
-    return "read timeout" in exc_msg or "503" in exc_msg or "504" in exc_msg
+    is_timeout = isinstance(exception, TimeoutError) or "timeout" in exc_msg
+    is_server_fail = any(str(code) in exc_msg for code in range(500, 600))
+    return is_timeout or is_server_fail
 
 
 def select_iris_left_to_right(
@@ -478,9 +481,12 @@ def select_iris_left_to_right(
                 )
                 logger.debug(f"Result:\n{manager.format_sparql_result(result)}")
                 reject = result.is_empty
+            except SPARQLExecuteException as e:
+                logger.warning(f"Error executing final SPARQL to check emptiness:\n{e}")
+                reject = e.is_client_error
             except Exception as e:
-                logger.warning(f"Error executing final SPARQL to check emptiness: {e}")
-                reject = not is_api_failure(e)
+                logger.warning(f"Unexpected error executing final SPARQL:\n{e}")
+                reject = True
 
             if not reject:
                 yield {"type": "validation", "result": "passed"}
