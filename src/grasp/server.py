@@ -9,7 +9,9 @@ from datetime import datetime, timezone
 from logging import INFO, FileHandler, Logger
 from typing import Any
 
-from fastapi import WebSocketDisconnect
+import uvicorn
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, conlist
 from universal_ml_utils.io import dump_json, load_json
 from universal_ml_utils.logging import get_logger
@@ -53,8 +55,6 @@ def generate_id(length: int = 6) -> str:
 
 def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
     # create a fast api websocket server to serve the generate_sparql function
-    import uvicorn
-    from fastapi import FastAPI, HTTPException, WebSocket
 
     app = FastAPI()
     logger = get_logger("GRASP SERVER", log_level)
@@ -67,9 +67,6 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
         output_logger.setLevel(INFO)
     else:
         output_logger = None
-
-    # add cors
-    from fastapi.middleware.cors import CORSMiddleware
 
     app.add_middleware(
         CORSMiddleware,
