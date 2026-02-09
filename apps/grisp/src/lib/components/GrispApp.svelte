@@ -261,6 +261,9 @@
 <section class="app-shell">
   <footer class="footer">
     <p>&copy; {new Date().getFullYear()} {COPYRIGHT}</p>
+    <nav class="footer-links">
+      <a href="/evaluate">Evaluation</a>
+    </nav>
   </footer>
 
   <div class="shell-content" class:shell-content--empty={!hasResult}>
@@ -445,10 +448,31 @@
     color: var(--text-subtle);
     font-size: 0.75rem;
     line-height: 1.3;
+    display: grid;
+    justify-items: center;
+    gap: var(--spacing-xs);
   }
 
   .footer p {
     margin: 0;
+  }
+
+  .footer-links {
+    display: flex;
+    gap: var(--spacing-sm);
+    font-size: 0.85rem;
+    flex-wrap: wrap;
+    justify-content: center;
+  }
+
+  .footer-links a {
+    color: var(--color-uni-blue);
+    text-decoration: underline;
+  }
+
+  .footer-links a:hover,
+  .footer-links a:focus-visible {
+    text-decoration: none;
   }
 
   .shell-content {
