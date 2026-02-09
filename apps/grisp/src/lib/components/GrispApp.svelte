@@ -22,6 +22,7 @@
   let output = null;
   let error = null;
   let pendingCancelSignal = false;
+  let expanded = false;
 
   $: connected = connectionStatus === 'connected';
   $: canSubmit = connected && !running && question.trim().length > 0;
@@ -153,6 +154,9 @@
       }
 
       if (payload.cancelled) {
+        steps = [];
+        output = null;
+        expanded = false;
         running = false;
         cancelling = false;
         return;
@@ -223,6 +227,11 @@
     output = null;
     error = null;
     statusMessage = '';
+    expanded = false;
+  }
+
+  function toggleExpanded() {
+    expanded = !expanded;
   }
 
   function handleKeydown(event) {
@@ -296,6 +305,7 @@
                 type="button"
                 class="icon-button icon-button--secondary"
                 on:click={toggleExamples}
+                disabled={!connected || running}
                 aria-label="Examples"
                 title="Example questions"
               >
@@ -404,27 +414,37 @@
       <OutputCard {output} />
     {/if}
 
-    <!-- Intermediate steps - only show after completion -->
-    {#if hasSteps && !running}
+    <!-- Show details button -->
+    {#if hasSteps}
+      <div class="toggle-section">
+        <button class="toggle-button" on:click={toggleExpanded}>
+          <span class="toggle-arrow">{expanded ? '▲' : '▼'}</span>
+          <span>{expanded ? 'Hide details' : 'Show details'}</span>
+        </button>
+      </div>
+    {/if}
+
+    <!-- Intermediate steps (shown when expanded) -->
+    {#if hasSteps && expanded}
       {#each groupedSteps as step, i (i)}
         {#if step.type === 'skeletons'}
-          <details class="steps-section" open={false}>
-            <summary class="steps-summary">
+          <div class="steps-section">
+            <div class="steps-header">
               Generated Skeletons ({step.skeletons?.length ?? 0})
-            </summary>
+            </div>
             <div class="steps-list">
               <StepCard {step} index={i} />
             </div>
-          </details>
+          </div>
         {:else if step.type === 'skeleton-selections'}
-          <details class="steps-section" open={false}>
-            <summary class="steps-summary">
+          <div class="steps-section">
+            <div class="steps-header">
               Skeleton #{step.skeleton + 1} - Selection
-            </summary>
+            </div>
             <div class="steps-list">
               <StepCard {step} index={i} />
             </div>
-          </details>
+          </div>
         {/if}
       {/each}
     {/if}
@@ -841,13 +861,38 @@
     display: inline-flex;
     align-items: center;
     gap: var(--spacing-sm);
-    padding: 0.5rem 1rem;
-    background: rgba(52, 74, 154, 0.08);
-    border: 1px solid rgba(52, 74, 154, 0.25);
+    padding: var(--spacing-sm) var(--spacing-md);
+    background: rgba(52, 74, 154, 0.06);
     border-radius: var(--radius-sm);
     color: var(--color-uni-blue);
-    font-weight: 600;
+    font-weight: 500;
     font-size: 0.9rem;
+    width: fit-content;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .progress-bar::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      90deg,
+      rgba(52, 74, 154, 0) 0%,
+      rgba(52, 74, 154, 0.15) 50%,
+      rgba(52, 74, 154, 0) 100%
+    );
+    background-size: 200% 100%;
+    animation: pulsate 2s linear infinite;
+  }
+
+  @keyframes pulsate {
+    0% {
+      background-position: 200% 0;
+    }
+    100% {
+      background-position: -200% 0;
+    }
   }
 
   .progress-text {
@@ -869,6 +914,41 @@
     to { transform: rotate(360deg); }
   }
 
+  .toggle-section {
+    display: flex;
+    justify-content: center;
+  }
+
+  .toggle-button {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--spacing-xs);
+    padding: var(--spacing-xs) var(--spacing-sm);
+    background: transparent;
+    border: none;
+    border-radius: var(--radius-sm);
+    color: var(--text-subtle);
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s ease, color 0.2s ease;
+  }
+
+  .toggle-button:hover {
+    background: rgba(0, 0, 0, 0.04);
+    color: var(--text-primary);
+  }
+
+  .toggle-button:focus {
+    outline: none;
+    background: rgba(0, 0, 0, 0.06);
+  }
+
+  .toggle-arrow {
+    font-size: 0.7rem;
+    opacity: 0.7;
+  }
+
   .steps-section {
     border: 1px solid var(--border-default);
     border-radius: var(--radius-md);
@@ -877,18 +957,13 @@
     box-shadow: var(--shadow-sm);
   }
 
-  .steps-summary {
+  .steps-header {
     padding: var(--spacing-md) var(--spacing-lg);
     font-weight: 600;
     font-size: 0.9rem;
     color: var(--text-subtle);
-    cursor: pointer;
-    user-select: none;
-    transition: background 0.15s ease;
-  }
-
-  .steps-summary:hover {
-    background: rgba(52, 74, 154, 0.04);
+    background: rgba(52, 74, 154, 0.02);
+    border-bottom: 1px solid var(--border-default);
   }
 
   .steps-list {

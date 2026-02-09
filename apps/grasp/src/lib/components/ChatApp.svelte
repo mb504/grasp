@@ -936,6 +936,7 @@ let running = false;
           {cancelling}
           composerOffset={composerOffset}
           shareConversation={createShareLink}
+          {selectedKgs}
         />
       {/if}
 
