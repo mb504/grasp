@@ -5,6 +5,14 @@ from grasp.configs import GraspConfig
 from grasp.functions import TaskFunctions
 from grasp.manager import KgManager
 from grasp.model import Message
+# Start of my code ####################################################################################
+from grasp.tasks.entity_linking import EntityLinkingSample
+from grasp.tasks.entity_linking import functions as entity_linking_functions
+from grasp.tasks.entity_linking import input_and_state as entity_linking_input_and_state
+from grasp.tasks.entity_linking import output as entity_linking_output
+from grasp.tasks.entity_linking import rules as entity_linking_rules
+from grasp.tasks.entity_linking import system_information as entity_linking_system_information
+# End of my code   ####################################################################################
 from grasp.tasks.cea import CeaSample
 from grasp.tasks.cea import functions as cea_functions
 from grasp.tasks.cea import input_and_state as cea_input_and_state
@@ -42,6 +50,9 @@ class Task(StrEnum):
     GENERAL_QA = "general-qa"
     CEA = "cea"
     WDQL = "wikidata-query-logs"
+# Start of my code ####################################################################################
+    ENTITY_LINKING = "entity-linking"
+# End of my code   ####################################################################################
 
 
 def rules() -> list[str]:
@@ -64,6 +75,10 @@ def task_rules(task: str) -> list[str]:
         return general_qa_rules()
     elif task == "cea":
         return cea_rules()
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return entity_linking_rules()
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return wdql_rules()
     elif task == "exploration":
@@ -79,6 +94,10 @@ def task_system_information(task: str, config: GraspConfig) -> str:
         return general_qa_system_information()
     elif task == "cea":
         return cea_system_information()
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return entity_linking_system_information()
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return wdql_system_information(config)
     elif task == "exploration":
@@ -101,6 +120,11 @@ def task_functions(
     elif task == "cea":
         # cea supports no examples
         return cea_functions(managers)
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        # entity linking supports no examples
+        return entity_linking_functions(managers)
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return wdql_functions()
     elif task == "exploration":
@@ -117,6 +141,10 @@ def task_done(task: str, fn_name: str) -> bool:
         return False
     elif task == "cea":
         return fn_name == "stop"
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return fn_name == "stop"
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return fn_name == "answer" or fn_name == "cancel"
     elif task == "exploration":
@@ -138,6 +166,10 @@ def task_setup(
         return input, None
     elif task == "cea":
         return cea_input_and_state(input, config)
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return entity_linking_input_and_state(input, config)
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         assert isinstance(input, str), (
             "Input for wikidata-query-logs must be a string (SPARQL query)"
@@ -167,6 +199,10 @@ def default_input_field(task: str) -> str | None:
         # input is typically a json dict with a table field and optional
         # metadata fields
         return "table"
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return "text"
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return "sparql"
     elif task == "exploration":
@@ -193,6 +229,10 @@ def task_output(
         return general_qa_output(messages)
     elif task == "cea":
         return cea_output(task_state)
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return entity_linking_output(task_state)
+# End of my code   ####################################################################################
     elif task == "wikidata-query-logs":
         return wdql_output(
             messages,
@@ -211,5 +251,9 @@ def task_to_sample(task: str) -> Type[Sample]:
         return SparqlQaSample
     elif task == "cea":
         return CeaSample
+# Start of my code ####################################################################################
+    elif task == "entity-linking":
+        return EntityLinkingSample
+# End of my code   ####################################################################################
 
     raise ValueError(f"Unsupported or unknown task {task}")
