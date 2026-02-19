@@ -927,10 +927,6 @@ def is_iri(iri: str) -> bool:
     return iri.startswith("<") and iri.endswith(">")
 
 
-# def is_fq_iri(iri: str) -> bool:
-#     return is_iri(iri) and validators.url(iri[1:-1])  # type: ignore
-
-
 def format_iri(
     iri: str,
     prefixes: dict[str, str],
