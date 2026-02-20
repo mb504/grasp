@@ -351,6 +351,10 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                     await websocket.send_json({"error": "Invalid request format"})
                     continue
 
+                logger.info(
+                    f"{prefix} Got request:\n{request.model_dump_json(indent=2)}"
+                )
+
                 if rate_limiter is not None:
                     retry_after = rate_limiter.check(client_ip)
                     if retry_after is not None:
@@ -369,10 +373,6 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                         {"error": "Unsupported knowledge graph selection"}
                     )
                     continue
-
-                logger.info(
-                    f"{prefix} Processing request:\n{request.model_dump_json(indent=2)}"
-                )
 
                 sel_managers, _ = partition_by(managers, lambda m: m.kg in sel)
 
