@@ -31,6 +31,11 @@ SELECT DISTINCT ?id ?value ?type WHERE {
     VALUES ?id { {IDS} }
     ?id osmkey:amenity ?value
     BIND("info" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id osmkey:admin_level ?lvl
+    BIND(CONCAT("has admin level ", STR(?lvl)) AS ?value)
+    BIND("info" AS ?type)
   }
 }
 ORDER BY ?id ?type ?value

@@ -352,7 +352,7 @@ def serve(config: ServerConfig, log_level: int | str | None = None) -> None:
                     continue
 
                 logger.info(
-                    f"{prefix} Got request:\n{request.model_dump_json(indent=2)}"
+                    f"{prefix} Got request:\n{request.model_dump_json(indent=2, exclude={'past'})}"
                 )
 
                 if rate_limiter is not None:
