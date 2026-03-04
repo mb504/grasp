@@ -11,7 +11,7 @@ from typing import Generator
 
 import torch
 from grammar_utils.parse import LR1Parser
-from peft import PeftModel
+from peft import AutoPeftModelForCausalLM, PeftModel
 from pydantic import BaseModel
 from search_rdf.model import TextEmbeddingModel
 from tqdm import tqdm
@@ -84,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="auto",
         help="Device to use (auto, cpu, cuda, etc.)",
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="auto",
+        help="Data type to use for model weights (auto, float16, bfloat16, float32, etc.)",
     )
 
     # add two subparsers: run and file for running grisp
@@ -749,6 +755,7 @@ def is_invalid_output(output: dict | None, none_output_invalid: bool = False) ->
 def load_model_and_tokenizer(
     directory: str,
     device: str,
+    dtype: str,
     logger: Logger,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     checkpoint = find_best_checkpoint(directory)
@@ -758,11 +765,18 @@ def load_model_and_tokenizer(
     train_cfg_path = os.path.join(directory, "config.yaml")
     train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
 
-    model = AutoModelForCausalLM.from_pretrained(
-        checkpoint,
-        dtype="auto",
-        device_map=device,
-    )
+    if train_cfg.lora is not None:
+        model = AutoPeftModelForCausalLM.from_pretrained(
+            checkpoint,
+            dtype=dtype,
+            device_map=device,
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            checkpoint,
+            dtype=dtype,
+            device_map=device,
+        )
 
     model.config.use_cache = True
     model.eval()
@@ -789,7 +803,12 @@ def main(args: argparse.Namespace) -> None:
     logger.debug(f"Using run configuration:\n{run_cfg.model_dump_json(indent=2)}")
 
     logger.info(f"Loading model from {args.run_directory}")
-    model, tokenizer = load_model_and_tokenizer(args.run_directory, args.device, logger)
+    model, tokenizer = load_model_and_tokenizer(
+        args.run_directory,
+        args.device,
+        args.dtype,
+        logger,
+    )
 
     skeleton_model, skeleton_tokenizer = model, tokenizer
     selection_model, selection_tokenizer = None, None
@@ -803,6 +822,7 @@ def main(args: argparse.Namespace) -> None:
         selection_model, selection_tokenizer = load_model_and_tokenizer(
             args.selection_run,
             args.device,
+            args.dtype,
             logger,
         )
 
