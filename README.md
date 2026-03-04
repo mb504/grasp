@@ -70,18 +70,6 @@ Follow these steps to run GRASP. If you want to use Docker, see section
 
 ### Run GRASP
 
-> Note: We recommend to use conda for ease of installation of Faiss and to avoid
-> dependency issues.
-
-1. Create and activate conda environment:
-`conda create -n grasp python=3.12 && conda activate grasp`
-
-2. Install Faiss (not supported to be installed with pip):
-`conda install -c pytorch -c nvidia -c conda-forge faiss-gpu=1.11.0`
-
-> You might have to install the CPU version of Faiss, since
-> the GPU version leads to issues on some systems.
-
 1. Install GRASP
 
 ```bash
@@ -93,13 +81,10 @@ pip install git+https://github.com/ad-freiburg/grasp.git@main
 pip install grasp-rdf
 ```
 
-1. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
+2. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
 set. We set it to `$PWD/data/kg-index`, but you can choose any directory you like.
 
-> We recommend to set it with conda, such that it is set automatically when you activate
-> the conda environment: `conda env config vars set GRASP_INDEX_DIR=/path/to/dir`
-
-1. Get indices for the knowledge graphs you want to use. All indices are available
+3. Get indices for the knowledge graphs you want to use. All indices are available
 [publicly](https://ad-publications.cs.uni-freiburg.de/grasp/kg-index).
 For example, to get the indices for Wikidata:
 
@@ -114,19 +99,19 @@ tar -xzf wikidata.tar.gz
 
 Optionally, you can also download example indices for few-shot learning.
 Example indices are always built from the train set of a benchmark
-and called `train.example-index`.
+and called `train-example-index`.
 For example, to get the example index for QALD-10 on Wikidata:
 
 ```bash
 # Change to benchmark directory
 cd data/benchmark/wikidata/qald10
 # Download example index
-wget https://ad-publications.cs.uni-freiburg.de/grasp/benchmark/wikidata/qald10/train.example-index.tar.gz
+wget https://ad-publications.cs.uni-freiburg.de/grasp/benchmark/wikidata/qald10/train-example-index.tar.gz
 # Extract example index
-tar -xzf train.example-index.tar.gz
+tar -xzf train-example-index.tar.gz
 ```
 
-1. Run GRASP:
+4. Run GRASP:
 
 ```bash
 # Note, that if you e.g. run OpenAI models, you also need to set the
@@ -244,8 +229,6 @@ docker build -t grasp .
 The entrypoint for the Docker image is the `grasp` CLI. To run it with
 Docker, make sure that your `GRASP_INDEX_DIR` is mounted to `/opt/grasp`
 and your API keys (e.g. `OPENAI_API_KEY`) are set as env variables.
-If you have a GPU available to speed up similarity search indices,
-pass `--gpus all` to `docker run`.
 
 Some example commands are shown below.
 
@@ -258,7 +241,6 @@ echo "Where was Angela Merkel born?" | \
   -v $GRASP_INDEX_DIR:/data/index \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
-  --gpus all \
   grasp run configs/run.yaml
 
 # If you want to run a server with your own config,
@@ -270,7 +252,6 @@ docker run --rm \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
   -v $PWD/my_config.yaml:/grasp/server.yaml \
-  --gpus all \
   grasp serve server.yaml
 ```
 
