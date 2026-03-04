@@ -181,8 +181,7 @@ MAX_IRIS = 131_072
 
 
 class GRISPRunConfig(BaseModel):
-    kg: str
-    endpoint: str | None = None
+    knowledge_graph: KgConfig
 
     embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
 
@@ -221,6 +220,7 @@ def generate_skeletons(
         add_generation_prompt=True,
         return_tensors="pt",
         return_dict=True,
+        enable_thinking=False,
     ).to(device)  # type: ignore
     prompt_length = enc["input_ids"].shape[1]  # type: ignore
 
@@ -297,10 +297,13 @@ def rerank_alternatives(
         alternatives,
     )
 
-    input_ids = tokenizer.apply_chat_template(
+    enc = tokenizer.apply_chat_template(
         prompt,
         add_generation_prompt=True,
-    )  # type: ignore
+        return_dict=True,
+        enable_thinking=False,
+    )
+    input_ids = enc["input_ids"]  # type: ignore
 
     fmt = tokenizer.decode(input_ids)  # type: ignore
     logger.debug(f"Reranking alternatives:\n{fmt}")
@@ -812,10 +815,9 @@ def main(args: argparse.Namespace) -> None:
             f"Using separate model {selection_model.config.name_or_path} for selection"  # type: ignore
         )
 
-    kg_config = KgConfig(kg=run_cfg.kg, endpoint=run_cfg.endpoint)
-    manager = load_kg_manager(kg_config)
+    manager = load_kg_manager(run_cfg.knowledge_graph)
 
-    if kg_config.has_embedding_index:
+    if run_cfg.knowledge_graph.has_embedding_index:
         model = TextEmbeddingModel(run_cfg.embedding_model)
         manager.set_embedding_model(model)
 

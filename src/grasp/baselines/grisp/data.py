@@ -340,6 +340,7 @@ def tokenize_messages(
         enc: dict = tokenizer.apply_chat_template(
             messages,
             return_dict=True,
+            enable_thinking=False,
         )  # type: ignore
         enc["labels"] = enc["input_ids"]  # type: ignore
         return enc  # type: ignore
@@ -348,6 +349,7 @@ def tokenize_messages(
         messages,
         return_assistant_tokens_mask=True,
         return_dict=True,
+        enable_thinking=False,
     )  # type: ignore
 
     mask = enc["assistant_masks"]
@@ -359,6 +361,8 @@ def tokenize_messages(
         prompt_ids = tokenizer.apply_chat_template(
             messages[:-1],
             add_generation_prompt=True,
+            return_dict=True,
+            enable_thinking=False,
         )
         prompt_len = len(prompt_ids)
         non_prompt_ids = enc["input_ids"][prompt_len:]
