@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Iterable
+from typing import Any, Callable, Iterable, TypeVar
 
 from pydantic import BaseModel
 from termcolor import colored
@@ -176,7 +176,7 @@ def is_invalid_output(
     if has_error:
         return True
 
-    if none_output_invalid and output.get("output", None) is None:
+    if none_output_invalid and output.get("output") is None:
         return True
 
     for message in output.get("messages", []):
@@ -243,12 +243,25 @@ def clip(s: str, max_len: int = 128, respect_word_boundaries: bool = True) -> st
     return s[:first] + " ... " + s[last:]
 
 
-def ordered_unique(lst: list[str]) -> list[str]:
+T = TypeVar("T")
+
+
+def ordered_unique(
+    lst: list[T],
+    key: Callable[[T], Any] | None = None,
+    filter: Callable[[T], bool] | None = None,
+) -> list[T]:
     seen = set()
     unique = []
     for item in lst:
-        if item in seen:
+        if filter is not None and not filter(item):
             continue
-        seen.add(item)
+
+        k = key(item) if key is not None else item
+        if k in seen:
+            continue
+
+        seen.add(k)
         unique.append(item)
+
     return unique

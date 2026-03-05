@@ -1,9 +1,9 @@
 import argparse
-from logging import Logger
 import os
 import random
 import re
 import string
+from logging import Logger
 
 import torch
 from grammar_utils.parse import LR1Parser
@@ -12,16 +12,16 @@ from torch.utils.data import Dataset
 from tqdm.auto import tqdm
 from transformers import PreTrainedTokenizerBase
 from universal_ml_utils.io import dump_jsonl, load_jsonl
-from universal_ml_utils.logging import get_logger
+from universal_ml_utils.logging import get_logger, setup_logging
 
 from grasp.baselines.grisp.utils import load_sparql_parser
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
-from grasp.sparql.item import Item, get_sparql_items
+from grasp.sparql.item import Item, extract_sparql_items
 from grasp.sparql.types import Alternative, Selection
 from grasp.sparql.utils import find_all
-from grasp.tasks import SparqlQaSample
-from grasp.utils import get_available_knowledge_graphs
+from grasp.tasks.sparql_qa.examples import SparqlQaSample
+from grasp.utils import format_list, get_available_knowledge_graphs
 
 BOI = "<iri>"
 EOI = "</iri>"
@@ -57,14 +57,12 @@ class IRI(BaseModel):
             item.obj_type,
             item.variant,
         )
-        assert identifier is not None, "Failed to denormalize identifier"
+        assert identifier is not None, (
+            f"Failed to denormalize identifier {item.alternative.identifier}"
+        )
         identifier = manager.format_iri(identifier)
 
-        return IRI(
-            identifier=identifier,
-            label=label,
-            aliases=aliases,
-        )
+        return IRI(identifier=identifier, label=label, aliases=aliases)
 
 
 class GRISPSample(BaseModel):
@@ -98,7 +96,7 @@ def extract_query_and_variant_from_nl_iri(nl_iri: dict) -> tuple[str, str | None
     query = extract_value_from_nl_iri(nl_iri)
     variant: str | None = None
 
-    m = re.search(r" \((.*)\)$", query)
+    m = re.search(r" \(([^)]*)\)$", query)
     if m is not None:
         # remove variant in parentheses at the end
         query = query[: m.start()].strip()
@@ -119,6 +117,10 @@ class Skeleton:
         self.nl_iris = list(find_all(self.sparql_parse, "NL_IRI"))
         self.selections: list[Selection] = []
         self.identifiers: list[str] = []
+
+    @property
+    def nl_sparql(self) -> str:
+        return self.sparql_encoded.decode()
 
     @property
     def replaced(self) -> int:
@@ -229,13 +231,13 @@ def format_alternatives(alternatives: list[Alternative]) -> str:
     if len(alternatives) == 0:
         return "No alternatives found"
 
-    assert len(alternatives) < len(ALT_LABELS), (
-        f"Number of alternatives must be less than {len(ALT_LABELS)}"
+    assert len(alternatives) < len(ALT_LABELS) - 1, (
+        f"Number of alternatives must be less than {len(ALT_LABELS) - 1}"
     )
 
     top_k_string = "\n".join(
         # dont show variants in the listing
-        f"{lab}. {alt.get_selection_string(show_matched_alias=False, include_variants=[])}"
+        f"{lab}. {alt.get_selection_string(show_matched_label=False, include_variants=[])}"
         for lab, alt in zip(ALT_LABELS, alternatives)
     )
     none_lab = ALT_LABELS[len(alternatives)]
@@ -338,6 +340,7 @@ def tokenize_messages(
         enc: dict = tokenizer.apply_chat_template(
             messages,
             return_dict=True,
+            enable_thinking=False,
         )  # type: ignore
         enc["labels"] = enc["input_ids"]  # type: ignore
         return enc  # type: ignore
@@ -346,6 +349,7 @@ def tokenize_messages(
         messages,
         return_assistant_tokens_mask=True,
         return_dict=True,
+        enable_thinking=False,
     )  # type: ignore
 
     mask = enc["assistant_masks"]
@@ -357,6 +361,8 @@ def tokenize_messages(
         prompt_ids = tokenizer.apply_chat_template(
             messages[:-1],
             add_generation_prompt=True,
+            return_dict=True,
+            enable_thinking=False,
         )
         prompt_len = len(prompt_ids)
         non_prompt_ids = enc["input_ids"][prompt_len:]
@@ -400,6 +406,7 @@ def tokenize_and_log(
 ) -> dict[str, torch.Tensor]:
     output = tokenize_messages(messages, tokenizer, mask_inputs)
     logger.debug(f"Sample:\n{tokenizer.decode(output['input_ids'])}")
+    logger.debug(f"Length: {len(output['input_ids']):,}")
     label_ids = [label for label in output["labels"] if label != IGNORE_INDEX]
     logger.debug(
         f"Last 10 Input IDS: {output['input_ids'][-10 - len(label_ids) : -len(label_ids)]}"
@@ -427,7 +434,7 @@ class GRISPMaterializedSkeletonDataset(Dataset):
             log_level,
         )
 
-        self.counter = {}
+        self.counter = [0] * len(self.samples)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -435,10 +442,12 @@ class GRISPMaterializedSkeletonDataset(Dataset):
     def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         sample = self.samples[idx]
 
-        count = self.counter.get(idx, 0)
-        self.counter[idx] = count + 1
-
+        count = self.counter[idx]
         messages = sample.skeletons[count % len(sample.skeletons)]
+        self.counter[idx] += 1
+        self.logger.debug(
+            f"({type(self).__name__}) Accessing sample {idx} count {count}"
+        )
 
         return tokenize_and_log(
             messages,
@@ -502,9 +511,10 @@ class GRISPMaterializedSelectionDataset(Dataset):
         self.samples = [sample for sample in samples if sample.has_selections]
         self.tokenizer = tokenizer
         self.mask_inputs = mask_inputs
+
         self.logger = get_logger("GRISP MATERIALIZED SELECTION DATASET", log_level)
 
-        self.counter = {}
+        self.counter = [0] * len(self.samples)
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -512,10 +522,12 @@ class GRISPMaterializedSelectionDataset(Dataset):
     def __getitem__(self, idx: int) -> dict:
         sample = self.samples[idx]
 
-        count = self.counter.get(idx, 0)
-        self.counter[idx] = count + 1
-
+        count = self.counter[idx]
         messages = sample.selections[count % len(sample.selections)]
+        self.counter[idx] += 1
+        self.logger.debug(
+            f"({type(self).__name__}) Accessing sample {idx} count {count}"
+        )
 
         return tokenize_and_log(
             messages,
@@ -535,8 +547,12 @@ def prepare_selection(
     question, skeleton = materialize_sample(sample, is_val, skeleton_p)
     sparql = materialize_sparql(sample.sparql)
 
-    _, items = get_sparql_items(sparql, manager)
-    items = [item for item in items if not item.is_other_or_literal]
+    _, items = extract_sparql_items(sparql, manager)
+    items = [
+        item
+        for item in items
+        if item.is_entity_or_property or (item.is_unindexed and item.has_label)
+    ]
     assert len(items) > 0, "No valid item to replace found in sample"
 
     parser = load_sparql_parser()
@@ -560,7 +576,7 @@ def prepare_selection(
     alternatives = manager.get_selection_alternatives(
         query,
         # None means search in the full index corresponding to the obj_type
-        {item.obj_type: None},
+        {item.obj_type: None if item.is_entity_or_property else []},
         k,
     )
     alternatives = alternatives.get(item.obj_type, [])
@@ -571,10 +587,7 @@ def prepare_selection(
 
     if shuffle_alts:
         # shuffle all alternatives to counter position bias
-        # only the None alternative should always be last
-        none_alt = alternatives.pop()
         random.shuffle(alternatives)
-        alternatives.append(none_alt)
 
     target_option: int | None = None
     for i, alt in enumerate(alternatives):
@@ -747,9 +760,9 @@ def parse_args() -> argparse.Namespace:
         help="Path to output JSONL file to save the processed data",
     )
     parser.add_argument(
-        "--materialize",
+        "--allow-unknown",
         action="store_true",
-        help="Materialize the samples into usable inputs for training",
+        help="Allow (directly predict) unkown items instead of skipping the sample",
     )
     parser.add_argument(
         "--seed",
@@ -762,12 +775,24 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="Overwrite the output file if it exists",
     )
+    parser.add_argument(
+        "--log-level",
+        type=str,
+        default="INFO",
+        help="Logging level",
+    )
     return parser.parse_args()
 
 
 def main(args: argparse.Namespace) -> None:
-    manager = load_kg_manager(KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint))
-    logger = get_logger("GRISP DATA", level="INFO")
+    setup_logging(args.log_level)
+    logger = get_logger("GRISP DATA", args.log_level)
+
+    manager = load_kg_manager(
+        KgConfig(kg=args.knowledge_graph, endpoint=args.endpoint),
+        skip_caches=True,
+    )
+    manager.set_info_retrieval(enable=False)
 
     if os.path.exists(args.output_file) and not args.overwrite:
         raise FileExistsError(
@@ -791,22 +816,34 @@ def main(args: argparse.Namespace) -> None:
                 remove_known=True,
             )
             sparql = manager.prettify(sparql)
-            sparql, items = get_sparql_items(
-                sparql,
-                manager,
-            )
+            sparql, items = extract_sparql_items(sparql, manager)
 
-            if any(item.invalid for item in items):
+            invalid_items = [
+                item
+                for item in items
+                if (item.is_unindexed and not item.has_label)
+                or (item.is_unknown and not args.allow_unknown)
+            ]
+            if invalid_items:
                 invalid += 1
-                logger.debug(f"Invalid sample {sample.id}:\n{sparql}")
+                invalid_str = format_list(
+                    item.alternative.get_selection_string(
+                        include_variants=[item.variant] if item.variant else None
+                    )
+                    for item in invalid_items
+                )
+
+                logger.debug(
+                    f"Invalid sample {sample.id}:\n\n{sample.question}\n\n"
+                    f"{sparql}\n\n{invalid_str}"
+                )
                 continue
 
             parts = []
             start = 0
             for item in items:
-                # others can only be invalid, which is already checked above
-                # literals should be predicted directly
-                if item.is_other_or_literal:
+                # literals, common, and unknown (if allowed) should be predicted directly
+                if item.is_literal or item.is_common or item.is_unknown:
                     continue
 
                 item_start, item_end = item.item_span
@@ -830,7 +867,8 @@ def main(args: argparse.Namespace) -> None:
         except Exception as e:
             error += 1
             logger.debug(
-                f"Error processing sample {sample.id}:\n{sample.sparql}\n\n{e}"
+                f"Error processing sample {sample.id}:\n"
+                f"{sample.model_dump_json(indent=2)}\n\n{e}"
             )
             continue
 

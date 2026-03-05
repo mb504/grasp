@@ -4,6 +4,7 @@ import os
 import random
 import sys
 
+from search_rdf.model import TextEmbeddingModel
 from tqdm import tqdm
 from universal_ml_utils.configuration import load_config
 from universal_ml_utils.io import (
@@ -13,9 +14,10 @@ from universal_ml_utils.io import (
     load_text,
 )
 from universal_ml_utils.logging import get_logger, setup_logging
-from universal_ml_utils.ops import extract_field
+from universal_ml_utils.ops import consume_generator, extract_field
 
 from grasp.build import build_indices, get_data
+from grasp.build.cache import build_caches
 from grasp.build.data import merge_kgs
 from grasp.configs import (
     GraspConfig,
@@ -27,15 +29,14 @@ from grasp.configs import (
 )
 from grasp.core import generate, load_notes, setup
 from grasp.evaluate import evaluate_f1, evaluate_with_judge
-from grasp.manager import find_embedding_model
 from grasp.notes import (
     take_notes_from_exploration,
     take_notes_from_outputs,
     take_notes_from_samples,
 )
 from grasp.server import serve
-from grasp.tasks import Task, default_input_field
-from grasp.tasks.examples import ExampleIndex, load_example_indices
+from grasp.tasks import Task, get_task
+from grasp.tasks.examples import load_example_indices, task_to_index
 from grasp.utils import (
     get_available_knowledge_graphs,
     is_invalid_output,
@@ -281,6 +282,12 @@ def parse_args() -> argparse.Namespace:
         help="Result size after which exact F1 score instead of assignment F1 score "
         "is used (due to performance reasons)",
     )
+    eval_f1_parser.add_argument(
+        "--fix-prefixes",
+        action="store_true",
+        help="Try to fix missing prefix issues in target and prediction SPARQL queries "
+        "before evaluating them",
+    )
 
     eval_judge_parser = eval_subparsers.add_parser(
         "judge",
@@ -354,9 +361,11 @@ def parse_args() -> argparse.Namespace:
         help="Variables with format {key} in SPARQL queries to replace with values in format key:value",
     )
     data_parser.add_argument(
-        "--disable-id-fallback",
-        action="store_true",
-        help="Disable fallback to using IDs as labels if no label is found",
+        "--add-id-as-label",
+        type=str,
+        default=None,
+        choices=["always", "empty"],
+        help="When to add a label fallback based on entity/property IDs",
     )
     add_overwrite_arg(data_parser)
 
@@ -395,35 +404,74 @@ def parse_args() -> argparse.Namespace:
     index_parser.add_argument(
         "--entities-type",
         type=str,
-        choices=["prefix", "similarity"],
-        default="prefix",
+        choices=["keyword", "fuzzy", "embedding"],
+        default="fuzzy",
         help="Type of entity index to build",
     )
     index_parser.add_argument(
         "--properties-type",
         type=str,
-        choices=["prefix", "similarity"],
-        default="similarity",
+        choices=["keyword", "fuzzy", "embedding"],
+        default="embedding",
         help="Type of property index to build",
     )
     index_parser.add_argument(
-        "--sim-precision",
+        "--emb-model",
         type=str,
-        choices=["float32", "ubinary"],
-        help="Precision when building similarity index",
+        default="Qwen/Qwen3-Embedding-0.6B",
+        help="Embedding model to use when building embedding index",
     )
     index_parser.add_argument(
-        "--sim-embedding-dim",
+        "--emb-device",
+        type=str,
+        default=None,
+        help="Device to use for embedding model when building embedding index",
+    )
+    index_parser.add_argument(
+        "--emb-dim",
         type=int,
-        help="Embedding dimensionality when building similarity index",
+        help="Embedding dimensionality when building embedding index",
     )
     index_parser.add_argument(
-        "--sim-batch-size",
+        "--emb-batch-size",
         type=int,
         default=256,
-        help="Batch size when building similarity index",
+        help="Batch size when building embedding index",
     )
     add_overwrite_arg(index_parser)
+
+    # cache infos for knowledge graph
+    cache_parser = subparsers.add_parser(
+        "cache",
+        help="Cache entity and property information for a knowledge graph",
+    )
+    cache_parser.add_argument(
+        "kg",
+        type=str,
+        choices=available_kgs,
+        help="Knowledge graph to cache infos for",
+    )
+    cache_parser.add_argument(
+        "-b",
+        "--batch-size",
+        type=int,
+        default=512,
+        help="Number of items to process in each batch.",
+    )
+    cache_parser.add_argument(
+        "-e",
+        "--endpoint",
+        type=str,
+        default=None,
+        help="SPARQL endpoint to use for querying the knowledge graph.",
+    )
+    cache_parser.add_argument(
+        "--limit",
+        type=int,
+        default=1_000_000,
+        help="Only cache the top N items",
+    )
+    add_overwrite_arg(cache_parser)
 
     # build example index
     example_parser = subparsers.add_parser(
@@ -446,6 +494,13 @@ def parse_args() -> argparse.Namespace:
         default=256,
         help="Batch size for building the example index",
     )
+    example_parser.add_argument(
+        "--emb-model",
+        type=str,
+        default="Qwen/Qwen3-Embedding-0.6B",
+        help="Embedding model to use when building examples index",
+    )
+    add_task_arg(example_parser)
     add_overwrite_arg(example_parser)
 
     parser.add_argument(
@@ -466,15 +521,17 @@ def run_grasp(args: argparse.Namespace) -> None:
     logger = get_logger("GRASP", args.log_level)
     config = GraspConfig(**load_config(args.config))
 
-    managers = setup(config)
+    managers, model = setup(config)
 
-    model = find_embedding_model(managers)
-    example_indices = load_example_indices(args.task, config, model=model)
+    if model is None:
+        model = config.embedding_model
+
+    example_indices = load_example_indices(args.task, config, model)
 
     notes, kg_notes = load_notes(config)
 
     if args.input_field is None:
-        input_field = default_input_field(args.task)
+        input_field = get_task(args.task, managers, config).default_input_field
     else:
         input_field = args.input_field
 
@@ -548,15 +605,17 @@ def run_grasp(args: argparse.Namespace) -> None:
             ):
                 continue
 
-        *_, output = generate(
-            args.task,
-            ipt,
-            config,
-            managers,
-            kg_notes,
-            notes,
-            example_indices=example_indices,
-            logger=logger,
+        output = consume_generator(
+            generate(
+                args.task,
+                ipt,
+                config,
+                managers,
+                kg_notes,
+                notes,
+                example_indices=example_indices,
+                logger=logger,
+            )
         )
 
         output["id"] = id
@@ -608,7 +667,7 @@ def get_grasp_data(args: argparse.Namespace) -> None:
         args.property_sparql,
         query_params,
         args.overwrite,
-        args.disable_id_fallback,
+        args.add_id_as_label,
         args.log_level,
     )
 
@@ -656,6 +715,7 @@ def evaluate_grasp(args: argparse.Namespace) -> None:
             args.timeout,
             args.retry_failed,
             args.exact_after,
+            args.fix_prefixes,
             args.log_level,
         )
 
@@ -695,9 +755,20 @@ def main():
             args.properties_type,
             args.overwrite,
             args.log_level,
-            sim_batch_size=args.sim_batch_size,
-            sim_precision=args.sim_precision,
-            sim_embedding_dim=args.sim_embedding_dim,
+            embedding_model=args.emb_model,
+            embedding_device=args.emb_device,
+            embedding_batch_size=args.emb_batch_size,
+            embedding_dim=args.emb_dim,
+        )
+
+    elif args.command == "cache":
+        build_caches(
+            args.kg,
+            args.endpoint,
+            args.limit,
+            args.batch_size,
+            args.overwrite,
+            args.log_level,
         )
 
     elif args.command == "notes":
@@ -713,9 +784,12 @@ def main():
         evaluate_grasp(args)
 
     elif args.command == "examples":
-        ExampleIndex.build(
+        model = TextEmbeddingModel(args.emb_model)
+        index = task_to_index(args.task)
+        index.build(
             args.examples_file,
             args.output_dir,
+            model,
             args.batch_size,
             args.overwrite,
             args.log_level,

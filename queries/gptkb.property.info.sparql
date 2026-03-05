@@ -2,24 +2,34 @@ PREFIX rdfs: <https://www.w3.org/2000/01/rdf-schema#>
 PREFIX gptkb: <https://gptkb.org/entity/>
 PREFIX gptkbp: <https://gptkb.org/prop/>
 
-SELECT
-  ?id
-  (GROUP_CONCAT(DISTINCT ?info; SEPARATOR=";;;") AS ?infos)
-WHERE {
+SELECT DISTINCT ?id ?value ?type WHERE {
   # Get additional information
   {
     VALUES ?id { {IDS} }
+    ?id rdfs:label ?value
+    BIND("label" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
+    ?id gptkbp:alternativeName ?value
+    BIND("alias" AS ?type)
+  } UNION {
+    VALUES ?id { {IDS} }
     ?id gptkbp:instanceOf | (gptkbp:instanceOf/rdfs:label) ?inst
-    BIND(CONCAT("is instance of ", ?inst) AS ?info)
+    BIND(CONCAT("is instance of ", ?inst) AS ?value)
+    BIND("info" AS ?type)
+    FILTER(ISLITERAL(?value))
   } UNION {
     VALUES ?id { {IDS} }
     ?id gptkbp:knownFor | (gptkbp:knownFor/rdfs:label) ?known
-    BIND(CONCAT("is known for ", ?known) AS ?info)
+    BIND(CONCAT("is known for ", ?known) AS ?value)
+    BIND("info" AS ?type)
+    FILTER(ISLITERAL(?value))
   } UNION {
     VALUES ?id { {IDS} }
     ?id gptkbp:notableFor | (gptkbp:notableFor/rdfs:label) ?notable
-    BIND(CONCAT("is known for ", ?notable) AS ?info)
+    BIND(CONCAT("is known for ", ?notable) AS ?value)
+    BIND("info" AS ?type)
+    FILTER(ISLITERAL(?value))
   }
-  FILTER(ISLITERAL(?info))
 }
-GROUP BY ?id
+ORDER BY ?id ?type ?value

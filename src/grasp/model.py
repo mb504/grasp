@@ -18,7 +18,7 @@ from openai.types.responses.response_output_message import ResponseOutputMessage
 from openai.types.responses.response_reasoning_item import ResponseReasoningItem
 from pydantic import BaseModel
 
-from grasp.configs import GraspConfig, ModelConfig
+from grasp.configs import ModelConfig
 
 
 class ToolCall(BaseModel):

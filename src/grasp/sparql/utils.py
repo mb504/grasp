@@ -8,6 +8,7 @@ from urllib.parse import quote_plus, urlparse, urlunparse
 
 import requests
 from grammar_utils.parse import LR1Parser
+from requests.exceptions import JSONDecodeError
 
 from grasp.sparql.types import AskResult, Binding, Position, SelectResult
 
@@ -28,7 +29,9 @@ def get_endpoint(kg: str) -> str:
 
 
 class SPARQLException(Exception):
-    pass
+    def __init__(self, message: str, query: str | None = None) -> None:
+        super().__init__(message)
+        self.query = query
 
 
 def load_sparql_grammar() -> tuple[str, str]:
@@ -320,7 +323,7 @@ def autocomplete_sparql(
     try:
         parse, _ = parse_string(sparql, parser)
     except Exception as e:
-        raise SPARQLException("SPARQL query is not valid") from e
+        raise SPARQLException("SPARQL query is not valid", sparql) from e
 
     # check if query is a select query
     query = find(parse, "QueryType")
@@ -328,7 +331,7 @@ def autocomplete_sparql(
 
     query = query["children"][0]
     if query["name"] != "SelectQuery":
-        raise SPARQLException("SPARQL query is not a select query")
+        raise SPARQLException("SPARQL query is not a select query", sparql)
 
     select_clause = query["children"][0]
     select_clause["children"][1:] = [
@@ -345,7 +348,8 @@ def autocomplete_sparql(
     )
     if not autocomp_vars:
         raise SPARQLException(
-            f"Variable ?{var} must occurr in the WHERE clause at least once"
+            f"Variable ?{var} must occurr in the WHERE clause at least once",
+            sparql,
         )
 
     for autocomp_var in autocomp_vars:
@@ -380,7 +384,8 @@ def autocomplete_sparql(
 
     raise SPARQLException(
         f"Failed to determine position (subject, property, or object) "
-        f"of ?{var} in the query"
+        f"of ?{var} in the query",
+        sparql,
     )
 
 
@@ -482,7 +487,7 @@ def autocomplete_prefix(
 
         return final_query, query_type, position
 
-    raise SPARQLException("Failed to autocomplete prefix")
+    raise SPARQLException("Failed to autocomplete prefix", prefix)
 
 
 def query_type(sparql: str, parser: LR1Parser, is_prefix: bool = False) -> str:
@@ -775,7 +780,31 @@ def set_limit(sparql: str, parser: LR1Parser, limit: int) -> str:
     return parse_to_string(parse)
 
 
+class SPARQLExecuteException(SPARQLException):
+    def __init__(
+        self,
+        message: str,
+        query: str,
+        status_code: int | None = None,
+    ) -> None:
+        super().__init__(message, query)
+        self.status_code = status_code
+
+    @property
+    def is_other_error(self) -> bool:
+        return self.status_code is None
+
+    @property
+    def is_client_error(self) -> bool:
+        return self.status_code is not None and int(self.status_code / 100) == 4
+
+    @property
+    def is_server_error(self) -> bool:
+        return self.status_code is not None and int(self.status_code / 100) == 5
+
+
 def _stream_with_timeout(
+    sparql: str,
     response: requests.Response,
     seconds: float | None = None,
 ) -> Any:
@@ -786,8 +815,9 @@ def _stream_with_timeout(
             continue
         chunks.append(chunk)
         if seconds and time.perf_counter() - start > seconds:
-            raise TimeoutError(
-                f"Took longer than {seconds} seconds to read SPARQL result"
+            raise SPARQLExecuteException(
+                f"Took longer than {seconds} seconds to read SPARQL result",
+                sparql,
             )
 
     full = b"".join(chunks)
@@ -801,6 +831,7 @@ def execute(
     request_timeout: float | tuple[float, float] | None = REQUEST_TIMEOUT,
     max_retries: int = 0,
     read_timeout: float | None = READ_TIMEOUT,
+    **kwargs: Any,
 ) -> SelectResult | AskResult:
     max_retries = max(0, max_retries)
     for i in range(max_retries + 1):
@@ -814,57 +845,86 @@ def execute(
                 data={"query": sparql},
                 timeout=request_timeout,
                 stream=True,
+                **kwargs,
             )
 
             response.raise_for_status()
 
-            res = _stream_with_timeout(response, read_timeout)
+            res = _stream_with_timeout(sparql, response, read_timeout)
             if "boolean" in res:
                 return AskResult(res["boolean"])
             else:
                 return SelectResult.from_json(res)
 
-        except (TimeoutError, requests.Timeout) as e:
+        except SPARQLExecuteException as e:
             # retry if not last retry
             if i < max_retries:
                 continue
 
             raise e
 
+        except requests.Timeout as e:
+            # retry if not last retry
+            if i < max_retries:
+                continue
+
+            raise SPARQLExecuteException(
+                f"SPARQL query timed out after {request_timeout} seconds",
+                sparql,
+            ) from e
+
         except requests.RequestException as e:
             # try to get qlever exception
-            try:
-                status = e.response.status_code
-                body = e.response.json()
-            except Exception:
-                status = None
-                body = None
+            status = None
+            body = None
+            qlever_ex = None
+            if e.response is not None:
+                status = e.response.status_code  # type: ignore
+                try:
+                    body = e.response.json()  # type: ignore
+                    qlever_ex = body["exception"] if "exception" in body else None
+                except JSONDecodeError:
+                    body = e.response.text
 
             client_error = status and int(status / 100) == 4
-            qlever_ex = body["exception"] if body and "exception" in body else None
 
             # immediately return on client error
             if client_error and qlever_ex:
-                raise requests.RequestException(qlever_ex) from e
+                raise SPARQLExecuteException(
+                    qlever_ex,
+                    sparql,
+                    status_code=status,
+                ) from e
             elif client_error:
-                raise e
+                raise SPARQLExecuteException(
+                    body if body else "Client error",
+                    sparql,
+                    status_code=status,
+                ) from e
             # retry on server error if not last retry
             elif i < max_retries - 1:
                 continue
             elif qlever_ex:
-                raise requests.RequestException(qlever_ex) from e
+                raise SPARQLExecuteException(
+                    qlever_ex,
+                    sparql,
+                    status_code=status,
+                ) from e
             else:
-                raise e
+                raise SPARQLExecuteException(
+                    body if body else "Server error",
+                    sparql,
+                    status_code=status,
+                ) from e
 
-    raise requests.RequestException(f"Maximum retries ({max_retries}) reached")
+    raise SPARQLExecuteException(
+        f"Maximum retries reached ({max_retries})",
+        sparql,
+    )
 
 
 def is_iri(iri: str) -> bool:
     return iri.startswith("<") and iri.endswith(">")
-
-
-# def is_fq_iri(iri: str) -> bool:
-#     return is_iri(iri) and validators.url(iri[1:-1])  # type: ignore
 
 
 def format_iri(
@@ -918,7 +978,10 @@ def load_qlever_prefixes(endpoint: str) -> dict[str, str]:
         assert line.startswith("PREFIX "), "Each line must start with 'PREFIX '"
         _, rest = line.split(" ", 1)
         prefix, uri = rest.split(":", 1)
-        prefixes[prefix.strip()] = uri.strip()[:-1]
+        uri = uri.strip()
+        assert is_iri(uri), "Prefix must be in IRI format"
+        prefixes[prefix.strip()] = uri[:-1]
+
     return prefixes
 
 

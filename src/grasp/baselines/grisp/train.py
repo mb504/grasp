@@ -1,4 +1,5 @@
 import argparse
+import math
 import os
 import random
 from logging import Logger
@@ -6,7 +7,7 @@ from logging import Logger
 import yaml
 from peft import LoraConfig, PeftModel, get_peft_model
 from pydantic import BaseModel
-from torch.utils.data import ConcatDataset, Dataset
+from torch.utils.data import ConcatDataset, Dataset, Sampler
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
@@ -16,8 +17,8 @@ from transformers import (
     Trainer,
     TrainingArguments,
 )
-from transformers.integrations.integration_utils import NeptuneCallback
 from universal_ml_utils.configuration import load_config
+from universal_ml_utils.io import load_json
 from universal_ml_utils.logging import get_logger
 
 from grasp.baselines.grisp.data import (
@@ -28,7 +29,11 @@ from grasp.baselines.grisp.data import (
     GRISPSkeletonDataset,
     load_samples,
 )
-from grasp.baselines.grisp.utils import set_chat_template
+from grasp.baselines.grisp.utils import (
+    SeededRandomSampler,
+    find_latest_checkpoint,
+    set_chat_template,
+)
 from grasp.configs import KgConfig
 from grasp.manager import load_kg_manager
 
@@ -67,7 +72,7 @@ class GRISPTrainConfig(BaseModel):
     weight_decay: float = 0.01
     warmup_ratio: float = 0.05
     batch_size: int = 8
-    num_epochs: int = 1
+    num_epochs: int | float = 1
     gradient_accumulation_steps: int = 1
     gradient_checkpointing: bool = False
     seed: int = 22
@@ -208,10 +213,50 @@ def load_datasets(
     return train_data, val_data
 
 
-def main(args: argparse.Namespace) -> None:
-    assert "NEPTUNE_PROJECT" in os.environ, "NEPTUNE_PROJECT env var not set"
-    assert "NEPTUNE_API_TOKEN" in os.environ, "NEPTUNE_API_TOKEN env var not set"
+def advance_dataset(
+    dataset: Dataset,
+    seed: int,
+    epochs_trained: int,
+    batch_size: int,
+    batches_in_current_epoch: int,
+) -> None:
+    n = len(dataset)  # type: ignore
+    sampler = SeededRandomSampler(n, seed)
 
+    # past epochs
+    for _ in range(epochs_trained):
+        for idx in sampler:
+            # access to trigger counter updates
+            _ = dataset[idx]
+
+    num_seen = min(batches_in_current_epoch * batch_size, n)
+
+    # partial epoch
+    i = 0
+    for idx in sampler:
+        if i >= num_seen:
+            break
+        # access to trigger counter updates
+        _ = dataset[idx]
+        i += 1
+
+
+class GRISPTrainer(Trainer):
+    def __init__(self, *args, epochs_trained: int = 0, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.epochs_trained = epochs_trained
+
+    def _get_train_sampler(self, dataset: Dataset | None = None) -> Sampler:  # type: ignore
+        if dataset is None:
+            dataset = self.train_dataset  # type: ignore
+        return SeededRandomSampler(
+            len(dataset),  # type: ignore
+            seed=self.args.seed,
+            epoch=self.epochs_trained,
+        )
+
+
+def main(args: argparse.Namespace) -> None:
     logger = get_logger("GRISP TRAIN", args.log_level)
 
     config = GRISPTrainConfig(**load_config(args.config))
@@ -230,6 +275,13 @@ def main(args: argparse.Namespace) -> None:
         f"Trainable parameters: {trainable / 1e6:.2f}M ({trainable / total:.2%})"
     )
 
+    if config.materialized and config.num_workers > 0:
+        logger.warning(
+            "Materialized datasets cannot be used with multiple workers. "
+            "Setting num_workers to 0."
+        )
+        config.num_workers = 0
+
     train_data, val_data = load_datasets(config, tokenizer, logger)
     collator = GRISPCollator(
         tokenizer.pad_token_id,  # type: ignore
@@ -240,17 +292,49 @@ def main(args: argparse.Namespace) -> None:
     run_name = os.path.basename(args.output_dir)
 
     os.makedirs(args.output_dir, exist_ok=True)
+    checkpoint = find_latest_checkpoint(args.output_dir)
+
+    logger.info(f"Train dataset size: {len(train_data):,} samples")  # type: ignore
+    logger.info(f"Validation dataset size: {len(val_data):,} samples")  # type: ignore
+
     # save config
     with open(os.path.join(args.output_dir, "config.yaml"), "w") as f:
         yaml.dump(config.model_dump(), f)
 
-    effective_batch_size = config.batch_size * config.gradient_accumulation_steps
-    steps_per_epoch = len(train_data) // effective_batch_size  # type: ignore
+    batches_per_epoch = math.ceil(len(train_data) / config.batch_size)  # type: ignore
+    steps_per_epoch = math.ceil(batches_per_epoch / config.gradient_accumulation_steps)
     logging_steps = max(1, steps_per_epoch // 100)  # log 100 times per epoch
 
     # eval once per epoch, but at least 10 times during training
-    total_steps = steps_per_epoch * config.num_epochs
+    total_steps = int(steps_per_epoch * config.num_epochs)
     eval_steps = max(1, min(steps_per_epoch, total_steps // 10))
+
+    report_to = None
+    if os.environ.get("WANDB_PROJECT"):
+        os.environ["WANDB_NAME"] = run_name
+        report_to = "wandb"
+
+    epochs_trained = 0
+    if checkpoint is not None:
+        logger.info(f"Resuming training from checkpoint {checkpoint}")
+        trainer_state = load_json(os.path.join(checkpoint, "trainer_state.json"))
+        global_step = trainer_state["global_step"]
+        epochs_trained = global_step // steps_per_epoch
+        steps_in_current_epoch = global_step % steps_per_epoch
+        batches_in_current_epoch = (
+            steps_in_current_epoch * config.gradient_accumulation_steps
+        )
+
+        if config.materialized:
+            # materialized datasets have counters that track seen samples,
+            # so we need to restore the correct counter state
+            advance_dataset(
+                train_data,
+                seed=config.seed,
+                epochs_trained=epochs_trained,
+                batch_size=config.batch_size,
+                batches_in_current_epoch=batches_in_current_epoch,
+            )
 
     training_args = TrainingArguments(
         output_dir=args.output_dir,
@@ -258,8 +342,10 @@ def main(args: argparse.Namespace) -> None:
         do_eval=True,
         eval_strategy="steps",
         eval_steps=eval_steps,
-        save_strategy="best",
+        save_strategy="steps",
         save_total_limit=1,
+        save_steps=eval_steps,
+        load_best_model_at_end=True,
         logging_strategy="steps",
         logging_steps=logging_steps,
         per_device_train_batch_size=config.batch_size,
@@ -272,16 +358,17 @@ def main(args: argparse.Namespace) -> None:
         num_train_epochs=config.num_epochs,
         seed=config.seed,
         bf16=True,
-        report_to="none",
+        report_to=report_to,
         run_name=run_name,
         metric_for_best_model="eval_loss",
         gradient_checkpointing=config.gradient_checkpointing,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         torch_compile=config.do_compile,
         dataloader_num_workers=config.num_workers,
         dataloader_prefetch_factor=4 if config.num_workers > 0 else None,
     )
 
-    trainer = Trainer(
+    trainer = GRISPTrainer(
         model=model,
         processing_class=tokenizer,
         args=training_args,
@@ -289,18 +376,12 @@ def main(args: argparse.Namespace) -> None:
         eval_dataset=val_data,
         data_collator=collator,
         callbacks=[
-            NeptuneCallback(
-                name=run_name,
-                base_namespace="grisp",
-                tags=["grisp", "training"],
-            ),
-            EarlyStoppingCallback(
-                early_stopping_patience=max(10, config.num_epochs // 10),
-            ),
+            EarlyStoppingCallback(max(10, round(config.num_epochs / 10))),
         ],
+        epochs_trained=epochs_trained,
     )
 
-    trainer.train()
+    trainer.train(resume_from_checkpoint=checkpoint)
 
 
 if __name__ == "__main__":

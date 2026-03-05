@@ -33,13 +33,14 @@ Links:
 ```
 apps/
   evaluation/                     # Streamlit app for evaluation
-  grasp/                          # (Deprecated) Flutter web app compatible
-                                    with GRASP server
-  website/                        # Svelte web app compatible with GRASP server
+  grasp/                          # Svelte web app compatible with GRASP server
+  grisp/                          # Svelte web app compatible with GRISP server
 bash/                             # Bash scripts to run and evaluate GRASP
 configs/
   run.yaml                        # Config to run GRASP with a single KG
   serve.yaml                      # Config to run GRASP with all available KGs
+  grisp/                          # Configs for the GRISP baseline
+  notes/                          # Configs for note-taking
 queries/                          # Custom index data and info SPARQL queries
                                     for various knowledge graphs
 scripts/                          # Various helper scripts
@@ -48,7 +49,7 @@ data/
     [knowledge-graph]/
       [benchmark]/                   
         test.jsonl                # Test set with input and ground truth
-        train.example_index/      # Index based on train set for few-shot learning
+        train-example-index/      # Index based on train set for few-shot learning
                                     (needs to be downloaded)
         outputs/
           [model].jsonl           # Model output
@@ -69,19 +70,7 @@ Follow these steps to run GRASP. If you want to use Docker, see section
 
 ### Run GRASP
 
-> Note: We recommend to use conda for ease of installation of Faiss and to avoid
-> dependency issues.
-
-1. Create and activate conda environment:
-`conda create -n grasp python=3.12 && conda activate grasp`
-
-2. Install Faiss (not supported to be installed with pip):
-`conda install -c pytorch -c nvidia -c conda-forge faiss-gpu=1.11.0`
-
-> You might have to install the CPU version of Faiss, since
-> the GPU version leads to issues on some systems.
-
-3. Install GRASP
+1. Install GRASP
 
 ```bash
 # Via git (recommended, up-to-date version)
@@ -92,13 +81,10 @@ pip install git+https://github.com/ad-freiburg/grasp.git@main
 pip install grasp-rdf
 ```
 
-4. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
+2. Set the `GRASP_INDEX_DIR` env variable. Defaults to `$HOME/.grasp/index` if not
 set. We set it to `$PWD/data/kg-index`, but you can choose any directory you like.
 
-> We recommend to set it with conda, such that it is set automatically when you activate
-> the conda environment: `conda env config vars set GRASP_INDEX_DIR=/path/to/dir`
-
-5. Get indices for the knowledge graphs you want to use. All indices are available
+3. Get indices for the knowledge graphs you want to use. All indices are available
 [publicly](https://ad-publications.cs.uni-freiburg.de/grasp/kg-index).
 For example, to get the indices for Wikidata:
 
@@ -113,19 +99,19 @@ tar -xzf wikidata.tar.gz
 
 Optionally, you can also download example indices for few-shot learning.
 Example indices are always built from the train set of a benchmark
-and called `train.example-index`.
+and called `train-example-index`.
 For example, to get the example index for QALD-10 on Wikidata:
 
 ```bash
 # Change to benchmark directory
 cd data/benchmark/wikidata/qald10
 # Download example index
-wget https://ad-publications.cs.uni-freiburg.de/grasp/benchmark/wikidata/qald10/train.example-index.tar.gz
+wget https://ad-publications.cs.uni-freiburg.de/grasp/benchmark/wikidata/qald10/train-example-index.tar.gz
 # Extract example index
-tar -xzf train.example-index.tar.gz
+tar -xzf train-example-index.tar.gz
 ```
 
-6. Run GRASP:
+4. Run GRASP:
 
 ```bash
 # Note, that if you e.g. run OpenAI models, you also need to set the
@@ -143,12 +129,18 @@ echo "Where was Angela Merkel born?" | grasp run configs/run.yaml
 # Input via CLI argument:
 grasp run configs/run.yaml --input "Where was Angela Merkel born?"
 
-# You can run different tasks with GRASP (default is sparql-qa). 
+# You can run different tasks with GRASP (default is sparql-qa).
 # Depending on the task, the expected input format and output format
 # will differ. For general-qa, the input is also a natural language
 # question, same as for sparql-qa, but the output will be just a natural
 # language answer instead of a SPARQL query.
 echo "Where was Angela Merkel born?" | grasp run configs/run.yaml --task general-qa
+
+# For cell entity annotation (cea), the input is a JSON object with a "table"
+# field containing "header" and "data". The task links table cells to entities
+# in the knowledge graph.
+grasp run configs/run.yaml --task cea --input-format json \
+  --input '{"table": {"header": ["Country", "Capital"], "data": [["France", "Paris"]]}}'
 
 # Show all available options:
 grasp run -h
@@ -183,6 +175,47 @@ grasp serve configs/serve.yaml
 
 # Show all available options:
 grasp serve -h
+
+# Evaluate GRASP output with F1 score (for sparql-qa task) by executing
+# predicted and ground truth SPARQL queries and comparing results:
+grasp evaluate f1 wikidata \
+  data/benchmark/wikidata/qald10/test.jsonl \
+  data/benchmark/wikidata/qald10/outputs/gpt-41.search_extended.jsonl
+
+# Use a judge model to pick the best output from multiple prediction files.
+# The last argument is the output evaluation file:
+grasp evaluate judge configs/run.yaml \
+  data/benchmark/wikidata/qald10/test.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model1.jsonl \
+  data/benchmark/wikidata/qald10/outputs/model2.jsonl \
+  data/benchmark/wikidata/qald10/outputs/judge.evaluation.json
+
+# Show all available options:
+grasp evaluate f1 -h
+grasp evaluate judge -h
+
+# Build an example index for few-shot learning from a JSONL file of examples:
+grasp examples data/benchmark/wikidata/qald10/train.jsonl \
+  data/benchmark/wikidata/qald10/train-example-index
+
+# Cache entity and property information for a knowledge graph (speeds up
+# runtime by pre-fetching info SPARQL query results):
+grasp cache wikidata
+
+# Merge data from multiple knowledge graphs into a single combined KG.
+# The first KG is the primary one; entities/properties from subsequent KGs
+# are added to it. For example used to combine language-specific indices
+# of the same knowledge graph:
+grasp merge wikidata-en wikidata-de wikidata-fr wikidata-multilingual
+
+# Note-taking: run GRASP on a knowledge graph to produce notes that
+# can be included in the config to improve performance.
+# Take notes by running GRASP on exemplary task samples:
+grasp notes samples configs/notes/samples.yaml notes/
+# Take notes from existing GRASP output files:
+grasp notes outputs configs/notes/outputs.yaml notes/
+# Take notes by freely exploring a knowledge graph (no task samples needed):
+grasp notes explore configs/notes/explore.yaml notes/
 ```
 
 ### Run GRASP with Docker
@@ -196,8 +229,6 @@ docker build -t grasp .
 The entrypoint for the Docker image is the `grasp` CLI. To run it with
 Docker, make sure that your `GRASP_INDEX_DIR` is mounted to `/opt/grasp`
 and your API keys (e.g. `OPENAI_API_KEY`) are set as env variables.
-If you have a GPU available to speed up similarity search indices,
-pass `--gpus all` to `docker run`.
 
 Some example commands are shown below.
 
@@ -207,10 +238,9 @@ echo "Where was Angela Merkel born?" | \
   docker run -i --rm \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
-  -v $GRASP_INDEX_DIR=/data/index \
+  -v $GRASP_INDEX_DIR:/data/index \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
-  --gpus all \
   grasp run configs/run.yaml
 
 # If you want to run a server with your own config,
@@ -218,11 +248,10 @@ echo "Where was Angela Merkel born?" | \
 docker run --rm \
   --user $(id -u):$(id -g) \
   -e OPENAI_API_KEY \
-  -v $GRASP_INDEX_DIR=/data/index \
+  -v $GRASP_INDEX_DIR:/data/index \
   -e HF_HOME=/hf \
   -v $HF_HOME:/hf \
   -v $PWD/my_config.yaml:/grasp/server.yaml \
-  --gpus all \
   grasp serve server.yaml
 ```
 
@@ -328,10 +357,10 @@ With the CLI, you can use the `grasp index` command as follows:
 grasp index imdb
 
 # You can also change the types of indices that are built. By default, we build a
-# prefix index for entities and a similarity index for properties.
+# fuzzy index for entities and an embedding index for properties.
 grasp index imdb \
-  --entities-type <prefix|similarity> \
-  --properties-type <prefix|similarity>
+  --entities-type <keyword|fuzzy|embedding> \
+  --properties-type <keyword|fuzzy|embedding>
 
 # Show all available options:
 grasp index -h
@@ -417,6 +446,17 @@ See our [info SPARQL query for Wikidata entities](queries/wikidata.entity.info.s
 Make sure to start a GRASP server first (see above).
 Then follow [these instructions](apps/grasp/README.md) to run the GRASP web app.
 
+## Run GRISP baseline
+
+GRISP (Guided Recurrent IRI Selection over SPARQL Skeletons) is an alternative
+question-answering baseline included in this repository. It works by fine-tuning
+a small language model to generate SPARQL skeletons, then iteratively retrieving
+and re-ranking entities using the GRASP search indices.
+
+Follow [these instructions](src/grasp/baselines/grisp/README.md) to train,
+run, and evaluate GRISP. To run the GRISP web app, follow
+[these instructions](apps/grisp/README.md).
+
 ## Run evaluation app
 
 Follow [these instructions](apps/evaluation/README.md) to run the
@@ -457,13 +497,13 @@ GRASP supports both commercial and open-source models.
 - `hosted_vllm/Qwen/Qwen2.5-72B-Instruct` (and other sizes)
 - `hosted_vllm/Qwen/Qwen3-32B` (and other sizes)
 
-4. Set model_endpoint in the config file or with `MODEL_ENDPOINT` env variable
+1. Set model_endpoint in the config file or with `MODEL_ENDPOINT` env variable
 to your vLLM server endpoint, by default this will be `http://localhost:8000/v1`
 
 #### Run Qwen2.5
 
 Change 72B to 7B, 14B, or 32B to run other sizes. Adapt the tensor parallel size
-to your GPU setup, we used two H100 GPUs for Qwen2.7 72B.
+to your GPU setup, we used two H100 GPUs for Qwen2.5 72B.
 
 ```bash
 vllm serve Qwen/Qwen2.5-72B-Instruct --tool-call-parser hermes \

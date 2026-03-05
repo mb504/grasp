@@ -1,5 +1,4 @@
 import argparse
-import glob
 import json
 import os
 import random
@@ -8,11 +7,13 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from logging import Logger
+from typing import Generator
 
 import torch
 from grammar_utils.parse import LR1Parser
-from peft import PeftModel
+from peft import AutoPeftModelForCausalLM, PeftModel
 from pydantic import BaseModel
+from search_rdf.model import TextEmbeddingModel
 from tqdm import tqdm
 from transformers import (
     AutoModelForCausalLM,
@@ -22,9 +23,9 @@ from transformers import (
     PreTrainedTokenizerBase,
 )
 from universal_ml_utils.configuration import load_config
-from universal_ml_utils.io import dump_json, dump_jsonl, load_json, load_jsonl
+from universal_ml_utils.io import dump_json, dump_jsonl, load_jsonl
 from universal_ml_utils.logging import get_logger
-from universal_ml_utils.ops import extract_field
+from universal_ml_utils.ops import consume_generator, extract_field, map_generator
 
 from grasp.baselines.grisp.data import (
     ALT_LABELS,
@@ -34,7 +35,11 @@ from grasp.baselines.grisp.data import (
     get_skeleton_prompt,
 )
 from grasp.baselines.grisp.train import GRISPTrainConfig
-from grasp.baselines.grisp.utils import load_sparql_parser, set_chat_template
+from grasp.baselines.grisp.utils import (
+    find_best_checkpoint,
+    load_sparql_parser,
+    set_chat_template,
+)
 from grasp.configs import KgConfig
 from grasp.manager import KgManager, load_kg_manager
 from grasp.sparql.types import (
@@ -43,6 +48,7 @@ from grasp.sparql.types import (
     Position,
     Selection,
 )
+from grasp.sparql.utils import SPARQLExecuteException
 from grasp.tasks.utils import format_sparql_result, prepare_sparql_result
 
 
@@ -78,6 +84,12 @@ def parse_args() -> argparse.Namespace:
         type=str,
         default="auto",
         help="Device to use (auto, cpu, cuda, etc.)",
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="auto",
+        help="Data type to use for model weights (auto, float16, bfloat16, float32, etc.)",
     )
 
     # add two subparsers: run and file for running grisp
@@ -175,8 +187,9 @@ MAX_IRIS = 131_072
 
 
 class GRISPRunConfig(BaseModel):
-    kg: str
-    endpoint: str | None = None
+    knowledge_graph: KgConfig
+
+    embedding_model: str = "Qwen/Qwen3-Embedding-0.6B"
 
     temperature: float | None = 0.4
     min_p: float | None = None
@@ -213,6 +226,7 @@ def generate_skeletons(
         add_generation_prompt=True,
         return_tensors="pt",
         return_dict=True,
+        enable_thinking=False,
     ).to(device)  # type: ignore
     prompt_length = enc["input_ids"].shape[1]  # type: ignore
 
@@ -271,7 +285,7 @@ def generate_skeletons(
     return skeletons[: cfg.skeleton_top_k]
 
 
-def reorder_alternatives(
+def rerank_alternatives(
     model: PreTrainedModel | PeftModel,
     tokenizer: PreTrainedTokenizerBase,
     manager: KgManager,
@@ -280,7 +294,7 @@ def reorder_alternatives(
     selections: list[Selection],
     alternatives: list[Alternative],
     logger: Logger,
-) -> list[Alternative]:
+) -> list[tuple[int | None, float]]:
     prompt, options = get_selection_prompt_and_options(
         manager,
         question,
@@ -289,10 +303,13 @@ def reorder_alternatives(
         alternatives,
     )
 
-    input_ids = tokenizer.apply_chat_template(
+    enc = tokenizer.apply_chat_template(
         prompt,
         add_generation_prompt=True,
-    )  # type: ignore
+        return_dict=True,
+        enable_thinking=False,
+    )
+    input_ids = enc["input_ids"]  # type: ignore
 
     fmt = tokenizer.decode(input_ids)  # type: ignore
     logger.debug(f"Reranking alternatives:\n{fmt}")
@@ -338,14 +355,10 @@ def reorder_alternatives(
         )
     )
 
-    if sorted_indices[0] == len(alternatives):
-        logger.debug(
-            "Top reranked alternative is 'None', returning empty list for selection"
-        )
-        return []
-
-    # return reordered alternatives
-    return [alternatives[i] for i in sorted_indices if i < len(alternatives)]
+    return [
+        (index if index < len(alternatives) else None, score)
+        for index, score in zip(sorted_indices, sorted_scores)
+    ]
 
 
 @dataclass
@@ -382,7 +395,7 @@ def find_alternatives(
     except Exception as e:
         logger.warning(f"Error autocompleting SPARQL prefix: {e}")
         # select all triples as fallback
-        autocomp_sparql = "SELECT * WHERE {{ ?s ?p ?o }} LIMIT 0"
+        autocomp_sparql = "SELECT * WHERE { ?s ?p ?o } LIMIT 0"
         query_type = "select"
         # if autocompletion fails, we are typically at a property
         position = Position.PROPERTY
@@ -436,7 +449,9 @@ def find_alternatives(
 
 def is_api_failure(exception: Exception) -> bool:
     exc_msg = str(exception).lower()
-    return "read timeout" in exc_msg or "503" in exc_msg or "504" in exc_msg
+    is_timeout = isinstance(exception, TimeoutError) or "timeout" in exc_msg
+    is_server_fail = any(str(code) in exc_msg for code in range(500, 600))
+    return is_timeout or is_server_fail
 
 
 def select_iris_left_to_right(
@@ -447,14 +462,16 @@ def select_iris_left_to_right(
     question: str,
     manager: KgManager,
     logger: Logger,
-) -> str | None:
+) -> Generator[dict, None, str | None]:
     start = time.perf_counter()
     # init empty memo
     memo: dict[str, Alternatives] = {}
 
     while True:
         if time.perf_counter() - start > cfg.selection_max_time:
-            raise RuntimeError("Exceeded maximum time for GRISP run")
+            yield {"type": "fail", "reason": "timeout"}
+            logger.debug("Selection process timed out, abandoning skeleton")
+            return None
 
         if skeleton.done:
             if not cfg.check_empty:
@@ -473,14 +490,21 @@ def select_iris_left_to_right(
                 )
                 logger.debug(f"Result:\n{manager.format_sparql_result(result)}")
                 reject = result.is_empty
+            except SPARQLExecuteException as e:
+                logger.warning(f"Error executing final SPARQL to check emptiness:\n{e}")
+                reject = e.is_client_error
             except Exception as e:
-                logger.warning(f"Error executing final SPARQL to check emptiness: {e}")
-                reject = not is_api_failure(e)
+                logger.warning(f"Unexpected error executing final SPARQL:\n{e}")
+                reject = True
 
             if not reject:
+                yield {"type": "validation", "result": "passed"}
                 break
 
-            elif skeleton.replaced == 0 or not cfg.backtrack:
+            yield {"type": "validation", "result": "failed"}
+
+            if skeleton.replaced == 0 or not cfg.backtrack:
+                yield {"type": "fail", "reason": "validation_failed"}
                 logger.debug("Final SPARQL query is empty, abandoning skeleton")
                 return None
 
@@ -488,6 +512,7 @@ def select_iris_left_to_right(
                 "Final SPARQL query is empty, backtracking to previous placeholder"
             )
             skeleton.pop_selection()
+            yield {"type": "backtrack", "reason": "validation_failed"}
             continue
 
         prefix, sparql, query, variant = skeleton.prepare_for_selection()
@@ -498,11 +523,13 @@ def select_iris_left_to_right(
             memo[prefix] = alternatives
 
         alternatives = memo[prefix]
+        ranking = None
+
         if cfg.rerank:
             # use model to rerank alternatives before selecting
             # will return an empty list if 'None' is top ranked
             # such that we can continue with backtracking
-            reordered = reorder_alternatives(
+            ranking = rerank_alternatives(
                 model,
                 tokenizer,
                 manager,
@@ -513,13 +540,42 @@ def select_iris_left_to_right(
                 logger,
             )
 
-            alternatives.alternatives = deque(reordered)
+        yield {
+            "type": "alternatives",
+            "index": skeleton.replaced,
+            "prefix": prefix,
+            "sparql": sparql,
+            "query": query,
+            "variant": variant,
+            "alternatives": [
+                {
+                    "identifier": alt.get_identifier(),
+                    "label": alt.get_label(),
+                    "variants": alt.variants,
+                }
+                for alt in alternatives.alternatives
+            ],
+            "ranking": ranking,
+        }
+
+        if ranking is not None:
+            # apply ranking
+            ranked_alts = []
+            for index, _ in ranking:
+                if index is None:
+                    break
+
+                alt = alternatives.alternatives[index]
+                ranked_alts.append(alt)
+
+            alternatives.alternatives = deque(ranked_alts)
 
         if alternatives.is_empty:
             if skeleton.replaced == 0:
                 logger.debug(
                     "No valid alternatives left for the first placeholder, abandoning skeleton"
                 )
+                yield {"type": "fail", "reason": "no_alternatives"}
                 return None
 
             elif not cfg.backtrack:
@@ -527,12 +583,14 @@ def select_iris_left_to_right(
                     "No valid alternatives left for the current placeholder, "
                     "abandoning skeleton due to backtracking disabled"
                 )
+                yield {"type": "fail", "reason": "no_alternatives"}
                 return None
 
             logger.debug(
                 "No valid alternatives left for the current placeholder, backtracking"
             )
             skeleton.pop_selection()
+            yield {"type": "backtrack", "reason": "no_alternatives"}
             continue
 
         # just try out next alternative in order
@@ -548,6 +606,14 @@ def select_iris_left_to_right(
                     f"Variant '{variant}' not found in alternative variants, "
                     f"trying next alternative"
                 )
+                yield {
+                    "type": "continue",
+                    "reason": "invalid_variant",
+                    "identifier": alternative.get_identifier(),
+                    "label": alternative.get_label(),
+                    "variant": variant,
+                    "variants": alternative.variants,
+                }
                 continue
 
             logger.debug(
@@ -567,13 +633,20 @@ def select_iris_left_to_right(
         )
         skeleton.add_selection(selection, manager)
 
+        yield {
+            "type": "select",
+            "identifier": alternative.get_identifier(),
+            "label": alternative.get_label(),
+            "variant": variant,
+        }
+
     # convert back to sparql, fix prefixes, and prettify
     sparql = skeleton.materialize()
     sparql = manager.fix_prefixes(sparql)
     return manager.prettify(sparql)
 
 
-def run(
+def generate(
     model: PreTrainedModel | PeftModel,
     tokenizer: PreTrainedTokenizerBase,
     cfg: GRISPRunConfig,
@@ -583,20 +656,30 @@ def run(
     logger: Logger,
     select_model: PreTrainedModel | PeftModel | None = None,
     select_tokenizer: PreTrainedTokenizerBase | None = None,
-) -> str | None:
-    skeletons = generate_skeletons(
-        model,
-        tokenizer,
-        cfg,
-        question,
-        manager,
-        parser,
-        logger,
-    )
+    yield_output: bool = False,
+) -> Generator[dict, None, dict]:
+    sparql = None
+    error = None
+    start = time.perf_counter()
 
-    for skeleton in skeletons:
-        try:
-            sparql = select_iris_left_to_right(
+    try:
+        skeletons = generate_skeletons(
+            model,
+            tokenizer,
+            cfg,
+            question,
+            manager,
+            parser,
+            logger,
+        )
+
+        yield {
+            "type": "skeletons",
+            "skeletons": [skeleton.nl_sparql for skeleton in skeletons],
+        }
+
+        for i, skeleton in enumerate(skeletons):
+            selections = select_iris_left_to_right(
                 skeleton,
                 select_model or model,
                 select_tokenizer or tokenizer,
@@ -605,15 +688,60 @@ def run(
                 manager,
                 logger,
             )
-        except Exception as e:
-            logger.warning(f"Error selecting IRIs for skeleton: {e}")
-            break
 
-        # take first fully assigned skeleton as final answer
-        if sparql is not None:
-            return sparql
+            sparql = yield from map_generator(
+                lambda selection: {
+                    "type": "selection",
+                    "skeleton": i,
+                    "selection": selection,
+                },
+                selections,
+            )
 
-    return None
+            # take first fully assigned skeleton as final answer
+            if sparql is not None:
+                break
+
+    except Exception as e:
+        logger.error(f"Error generating SPARQL query: {e}")
+        error = {
+            "reason": "failure",
+            "content": str(e),
+        }
+
+    out = {
+        "sparql": None,
+        "kg": manager.kg,
+        "selections": None,
+        "result": None,
+        "endpoint": manager.endpoint,
+        "formatted": "No SPARQL query generated or found",
+    }
+    if sparql is not None:
+        result, selections = prepare_sparql_result(
+            sparql,
+            manager.kg,
+            [manager],
+            max_rows=10,
+            max_columns=10,
+        )
+        out["sparql"] = result.sparql
+        out["selections"] = manager.format_selections(selections)
+        out["result"] = result.formatted
+        out["formatted"] = format_sparql_result(manager, result, selections)
+
+    end = time.perf_counter()
+    output = {
+        "type": "output",
+        "error": error,
+        "output": out,
+        "elapsed": end - start,
+    }
+
+    if yield_output:
+        yield output
+
+    return output
 
 
 def is_invalid_output(output: dict | None, none_output_invalid: bool = False) -> bool:
@@ -624,46 +752,31 @@ def is_invalid_output(output: dict | None, none_output_invalid: bool = False) ->
     )
 
 
-def find_best_checkpoint(run_directory: str) -> str:
-    # all subdir starting with checkpoint-*
-    checkpoints = glob.glob(os.path.join(run_directory, "checkpoint-*"))
-    assert len(checkpoints) > 0, "No checkpoints found"
-
-    def best_ckpt_key(checkpoint_dir: str) -> int | float:
-        path = os.path.join(checkpoint_dir, "trainer_state.json")
-        state = load_json(path)
-        global_step = state["global_step"]
-
-        log_entry = next(
-            (
-                entry
-                for entry in state["log_history"]
-                if entry["step"] == global_step and entry.get("eval_loss") is not None
-            ),
-        )
-        # sort by eval loss
-        return log_entry["eval_loss"]
-
-    checkpoints.sort(key=best_ckpt_key)
-    return checkpoints[0]
-
-
 def load_model_and_tokenizer(
     directory: str,
     device: str,
+    dtype: str,
     logger: Logger,
 ) -> tuple[PreTrainedModel | PeftModel, PreTrainedTokenizerBase]:
     checkpoint = find_best_checkpoint(directory)
+    assert checkpoint is not None, f"No best checkpoint found in {directory}"
     logger.info(f"Best checkpoint found at {checkpoint}")
 
     train_cfg_path = os.path.join(directory, "config.yaml")
     train_cfg = GRISPTrainConfig(**load_config(train_cfg_path))
 
-    model = AutoModelForCausalLM.from_pretrained(
-        checkpoint,
-        dtype="auto",
-        device_map=device,
-    )
+    if train_cfg.lora is not None:
+        model = AutoPeftModelForCausalLM.from_pretrained(
+            checkpoint,
+            dtype=dtype,
+            device_map=device,
+        )
+    else:
+        model = AutoModelForCausalLM.from_pretrained(
+            checkpoint,
+            dtype=dtype,
+            device_map=device,
+        )
 
     model.config.use_cache = True
     model.eval()
@@ -690,7 +803,12 @@ def main(args: argparse.Namespace) -> None:
     logger.debug(f"Using run configuration:\n{run_cfg.model_dump_json(indent=2)}")
 
     logger.info(f"Loading model from {args.run_directory}")
-    model, tokenizer = load_model_and_tokenizer(args.run_directory, args.device, logger)
+    model, tokenizer = load_model_and_tokenizer(
+        args.run_directory,
+        args.device,
+        args.dtype,
+        logger,
+    )
 
     skeleton_model, skeleton_tokenizer = model, tokenizer
     selection_model, selection_tokenizer = None, None
@@ -704,6 +822,7 @@ def main(args: argparse.Namespace) -> None:
         selection_model, selection_tokenizer = load_model_and_tokenizer(
             args.selection_run,
             args.device,
+            args.dtype,
             logger,
         )
 
@@ -716,7 +835,12 @@ def main(args: argparse.Namespace) -> None:
             f"Using separate model {selection_model.config.name_or_path} for selection"  # type: ignore
         )
 
-    manager = load_kg_manager(KgConfig(kg=run_cfg.kg, endpoint=run_cfg.endpoint))
+    manager = load_kg_manager(run_cfg.knowledge_graph)
+
+    if run_cfg.knowledge_graph.has_embedding_index:
+        model = TextEmbeddingModel(run_cfg.embedding_model)
+        manager.set_embedding_model(model)
+
     parser = load_sparql_parser()
 
     # adapted from GRASP cli
@@ -788,18 +912,8 @@ def main(args: argparse.Namespace) -> None:
             ):
                 continue
 
-        output = {
-            "id": id,
-            "type": "output",
-            "error": None,
-            "output": None,
-            "config": run_cfg.model_dump(),
-        }
-
-        start = time.perf_counter()
-
-        try:
-            sparql = run(
+        output = consume_generator(
+            generate(
                 skeleton_model,
                 skeleton_tokenizer,
                 run_cfg,
@@ -810,39 +924,10 @@ def main(args: argparse.Namespace) -> None:
                 selection_model,
                 selection_tokenizer,
             )
+        )
 
-            out = {
-                "sparql": None,
-                "kg": manager.kg,
-                "selections": None,
-                "result": None,
-                "endpoint": manager.endpoint,
-                "formatted": "No SPARQL generated",
-            }
-            if sparql is not None:
-                result, selections = prepare_sparql_result(
-                    sparql,
-                    manager.kg,
-                    [manager],
-                    max_rows=10,
-                    max_columns=10,
-                )
-                out["sparql"] = result.sparql
-                out["selections"] = manager.format_selections(selections)
-                out["result"] = result.formatted
-                out["formatted"] = format_sparql_result(manager, result, selections)
-
-            output["output"] = out
-
-        except Exception as e:
-            logger.error(f"Error processing input {i:,} (id={id}): {e}")
-            output["error"] = {
-                "reason": "failure",
-                "content": str(e),
-            }
-
-        end = time.perf_counter()
-        output["elapsed"] = end - start
+        output["config"] = run_cfg.model_dump()
+        output["id"] = id
 
         if not run_on_file:
             print(json.dumps(output))
