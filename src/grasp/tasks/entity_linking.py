@@ -1,5 +1,4 @@
 import re
-import unicodedata
 from typing import Any
 
 from pydantic import BaseModel
@@ -262,10 +261,6 @@ class AnnotationState:
         A heuristic to create indices for words in order to enable the index 
         annotation function, changes self.word_indices.
         """
-        #if self.method != "indices":
-        #    raise FunctionCallException(
-        #        "method is not 'indices', function create_indices should not be called"
-        #    )
 
         currently_at_word = False
         currently_at_number = False
@@ -1011,14 +1006,11 @@ def annotate_markdown(
     show_state_after_annotate: bool = True,
 ) -> str:
     # Annotation function that works by inputing the whole text excerpt with annotations
-    # in the format: 'original text ⟦words to be annotated⟧⟦q123⟧ rest of original text'
+    # in the format: 'original text ⟦words to be annotated⟧(q123) rest of original text'
     # to annotate the text. Deletes all previous annotations in the current text excerpt.
     manager, _ = find_manager(managers, kg)
 
     sequence = state.text.data[state.annotation_window]
-    # replace '⟦' and '⟧' in the input text with '[' and ']' to get a canonical format
-    # TODO: put this in state.format...
-    # text_to_be_annotated = text_to_be_annotated.replace("⟦", "[").replace("⟧", "]")
     annotation_length = len(text_to_be_annotated)
 
     potential_start = None
@@ -1226,7 +1218,7 @@ def call_function(
                 show_state_after_annotate,
             )
         if method == "prefix":
-            return annotate_prefix(
+            return delete_annotation_prefix(
                 fn_args["optional_short_prefix"],
                 fn_args["exact_words_to_be_annotated"],
                 fn_args["optional_short_suffix"],
@@ -1234,7 +1226,7 @@ def call_function(
                 show_state_after_annotate,
             )
         if method == "indices":
-            return annotate_indices(
+            return delete_annotation_indices(
                 fn_args["start_index"],
                 fn_args["end_index"],
                 state,

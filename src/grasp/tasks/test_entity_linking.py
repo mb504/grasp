@@ -1,5 +1,7 @@
 import unittest
+
 from unittest.mock import patch
+
 from entity_linking import (
     annotate_matching,
     annotate_indices,

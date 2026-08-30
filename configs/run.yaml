@@ -15,6 +15,11 @@ model_kwargs:
   # output_config:
   #   effort: env(THINKING_EFFORT:medium)
 
+task_kwargs:
+  entity-linking: 
+    method: indices
+    know_before_annotate: True
+
 tool_choice: env(TOOL_CHOICE:auto)
 
 seed: env(SEED:22)
