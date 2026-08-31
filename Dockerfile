@@ -16,12 +16,13 @@ CMD ["--help"]
 
 
 # to build the container: 'docker build -t grasp .'
+# (on mac: 'docker build --platform=linux/amd64 -t grasp .')
 
 # to run: 'docker run grasp'
 
 # Below is an example to run grasp entity-linking with an example input.
 # --log-level is set to DEBUG to view the linking process
-# you need to set the correct url of the LLM API in configs/run.yaml
+# you need to set the correct url of the LLM API in configs/run.yaml and also API key and provider
 
 # to try out different annotation methods, go to configs/run.yaml and change the method in:
 # task_kwargs:
@@ -37,4 +38,9 @@ CMD ["--help"]
 # annotate_up_to: up to which character the text should be annotated
 # special_instructions: choose e.g. what entities should be linked like: link only historical events
 
-# docker run grasp --log-level DEBUG run configs/run.yaml --task entity-linking --input-format json --input '{"text": {"data": "SMS Schwaben was the fourth of five ships of the Wittelsbach class of pre-dreadnought battleships of the Imperial German Navy. Built at the Imperial Dockyard in Wilhelmshaven, she was laid down in 1900 and completed in April 1904. Possessing a main battery of four 24-centimeter (9.4 in) guns, the ship had a top speed of 18 knots (33 km/h; 21 mph). Schwaben spent her early career as a gunnery training ship or participating in large-scale fleet exercises. At the start of World War I in August 1914, the sister ships were mobilized as IV Battle Squadron. Schwaben served in the North Sea and then the Baltic Sea until the threat from British submarines forced her to withdraw in 1916. For the remainder of the war, she was an engineering training ship for navy cadets. After the war, she was retained as a depot ship for F-type minesweepers in the Baltic from 1919 until June 1920, but was stricken from the navy list in March 1921 and sold for scrap.", "annotate_from": 30, "annotate_up_to": 300, "special_instructions": null}}'
+# first you need to set the GRASP_INDEX_DIR env variable (defaults to $HOME/.grasp/index) and download the index data: 
+# cd $GRASP_INDEX_DIR
+# wget https://ad-publications.cs.uni-freiburg.de/grasp/kg-index/wikidata.tar.gz
+# tar -xzf wikidata.tar.gz
+
+# docker run -v $GRASP_INDEX_DIR:/data/index -v $PWD/configs/run.yaml:/grasp/configs/run.yaml grasp --log-level DEBUG run configs/run.yaml --task entity-linking --input-format json --input '{"text": {"data": "SMS Schwaben was the fourth of five ships of the Wittelsbach class of pre-dreadnought battleships of the Imperial German Navy. Built at the Imperial Dockyard in Wilhelmshaven, she was laid down in 1900 and completed in April 1904. Possessing a main battery of four 24-centimeter (9.4 in) guns, the ship had a top speed of 18 knots (33 km/h; 21 mph). Schwaben spent her early career as a gunnery training ship or participating in large-scale fleet exercises. At the start of World War I in August 1914, the sister ships were mobilized as IV Battle Squadron. Schwaben served in the North Sea and then the Baltic Sea until the threat from British submarines forced her to withdraw in 1916. For the remainder of the war, she was an engineering training ship for navy cadets. After the war, she was retained as a depot ship for F-type minesweepers in the Baltic from 1919 until June 1920, but was stricken from the navy list in March 1921 and sold for scrap.", "annotate_from": 30, "annotate_up_to": 300, "special_instructions": "Only annotate ships."}}'
